@@ -118,6 +118,51 @@ class MediaServer(resource.Resource):
         request.responseHeaders.addRawHeader(b"content-type", b"application/json")
         return json.dumps({'error': 'unknown'}, indent=4).encode('latin')
 
+    def do_get_protocols(self,request):
+        ALGORITHMS=['AES','CHACHA20']
+        MODE=['CBC','GCM']
+        HASH=['SHA-256','SHA-512','MD5','BLAKE2b']
+
+        cli_alg=request.args[b'algorithms']
+        cli_alg_d = cli_alg[0].decode('latin')
+        cli_algs = cli_alg_d.strip('][').replace("'","").split(', ')
+        cli_mode=request.args[b'mode']
+        cli_mode_d = cli_mode[0].decode('latin')
+        cli_mods = cli_mode_d.strip('][').replace("'","").split(', ')
+        cli_hash=request.args[b'hash']
+        cli_hash_d = cli_hash[0].decode('latin')
+        cli_hashs = cli_hash_d.strip('][').replace("'","").split(', ')
+
+        matched_alg = None
+        matched_mode = None
+        matched_hash = None
+        for alg in cli_algs:
+            if alg in ALGORITHMS:
+                matched_alg = alg
+
+        if matched_alg is None:
+            request.setResponseCode(500)
+            return b''
+
+        for mod in cli_mods:
+            if mod in MODE:
+                matched_mode = mod
+
+        if matched_mode is None:
+            request.setResponseCode(500)
+            return b''
+
+        for h in cli_hashs:
+            if h in HASH:
+                matched_hash = h
+
+        if matched_hash is None:
+            request.setResponseCode(500)
+            return b''
+
+        return json.dumps({"Algorithm":matched_alg, "Mode":matched_mode, "Hash:":matched_hash},indent=4).encode('latin')
+
+
     # Handle a GET request
     def render_GET(self, request):
         logger.debug(f'Received request for {request.uri}')

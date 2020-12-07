@@ -14,6 +14,10 @@ logger.setLevel(logging.INFO)
 
 SERVER_URL = 'http://127.0.0.1:8080'
 
+ALGORITHMS=['AES','CHACHA20']
+MODE=['CBC','GCM']
+HASH=['SHA-256','SHA-512','MD5','BLAKE2b']
+
 def main():
     print("|--------------------------------------|")
     print("|         SECURE MEDIA CLIENT          |")
@@ -23,6 +27,15 @@ def main():
     print("Contacting Server")
     
     # TODO: Secure the session
+
+
+
+    req = requests.get(f'{SERVER_URL}/api/protocols?algorithms={ALGORITHMS}&mode={MODE}&hash={HASH}')
+    if req.status_code == 200:
+        print("Got server protocols: " , req.text)
+    elif req.status_code == 500:
+        print("No match found")
+        sys.exit(1)
 
     req = requests.get(f'{SERVER_URL}/api/list')
     if req.status_code == 200:
