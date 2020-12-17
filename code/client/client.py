@@ -1,3 +1,7 @@
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.asymmetric import dh
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 import requests
 import logging
 import binascii
@@ -14,9 +18,109 @@ logger.setLevel(logging.INFO)
 
 SERVER_URL = 'http://127.0.0.1:8080'
 
-ALGORITHMS=['AES','CHACHA20']
-MODE=['CBC','GCM']
-HASH=['SHA-256','SHA-512','MD5','BLAKE2b']
+ALGORITHMS = ['AES', 'CHACHA20']
+MODE = ['CBC', 'GCM']
+HASH = ['SHA-256', 'SHA-512', 'MD5', 'BLAKE2b']
+
+
+def public_key_compose(p, g, y):
+    pn = dh.DHParameterNumbers(p, g)
+    parameters = pn.parameters(backend=default_backend())
+    peer_public_numbers = dh.DHPublicNumbers(y, pn)
+    return peer_public_numbers.public_key(backend=default_backend())
+
+
+def public_key_decompose(pub):
+    p = pub.public_numbers().parameter_numbers.p
+    g = pub.public_numbers().parameter_numbers.g
+    y = pub.public_numbers().y
+
+    return p, g, y
+
+
+def generate_private_key(parameters):
+    """Generate private key"""
+    return parameters.generate_private_key()
+
+
+def generate_public_key(parameters, private_key):
+    """Generate public key"""
+    public_key = private_key.public_key()
+    return public_key
+
+
+def generate_public_and_private_keys():
+    """Returns generated keys"""
+    parameters = dh.generate_parameters(
+        generator=2, key_size=512, backend=default_backend())
+    privk = generate_private_key(parameters)
+    pubk = generate_public_key(parameters, privk)
+    return pubk, privk
+
+
+def build(p, g, y):
+    """Builds the key based on it's parameters (p,g,y)"""
+    print('Building key... ')
+    param_nums = dh.DHParameterNumbers(p, g)
+    parameters = param_nums.parameters(backend=default_backend())
+    pub_nums = dh.DHPublicNumbers(y, param_nums)
+    return pub_nums.public_key(backend=default_backend())
+
+
+def dismantle(pubk):
+    """Dismantles the key and returns it's parameters (p,g,y)"""
+    print('Decomposing key ', pubk)
+    return pubk.public_numbers().parameter_numbers.p, pubk.public_numbers().parameter_numbers.g, pubk.public_numbers().y
+
+
+def send_pubk(pubk):
+    """Send public key to server"""
+
+    #----/ Decompose Public Key /----#
+    p, g, y = dismantle(pubk)
+
+    #----/ Send public key to server /----#
+    print("Sending... ")
+    req = requests.get(f'{SERVER_URL}/api/pubk?p={p}&g={g}&y={y}')
+    print(req)
+
+    #----/ Error /----#
+    if req.status_code != 200:
+        print("Error. Public key not sent.")
+        sys.exit(0)
+
+    #----/ Sucess /----#
+    print('Public key sent... Getting server public key...')
+    server_params = json.loads(req.text)
+
+    return server_params
+
+
+def get_server_public_key(parameters):
+    """Build server public key"""
+    #----/ Build server key based on received parameters /----#
+    server_pubk = build(parameters["p"], parameters["g"], parameters["y"])
+    return server_pubk
+
+
+def exchange_keys(privk, server_pubk):
+    """Perform key exchange and key derivation"""
+    #----/ Exchange keys /----#
+    print("Creating shared key...")
+    shared_key = privk.exchange(server_pubk)
+
+    #----/ Key Derivation /----#
+    derived = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=None,
+        info=b'handshake data',
+        backend=default_backend()
+    ).derive(shared_key)
+
+    print("Derived key ", derived)
+    return derived
+
 
 def main():
     print("|--------------------------------------|")
@@ -25,17 +129,37 @@ def main():
 
     # Get a list of media files
     print("Contacting Server")
-    
-    # TODO: Secure the session
 
+    ##################################### CIPHER AGREEMENTS #####################################
+    ALGORITHMS = ['AES', 'CHACHA20']
+    MODE = ['CBC', 'GCM']
+    HASH = ['SHA-256', 'SHA-512', 'MD5', 'BLAKE2b']
 
-
-    req = requests.get(f'{SERVER_URL}/api/protocols?algorithms={ALGORITHMS}&mode={MODE}&hash={HASH}')
+    req = requests.get(
+        f'{SERVER_URL}/api/protocols?ALGORITHMS={ALGORITHMS}&Modes={MODE}&Digests={HASH}')
     if req.status_code == 200:
-        print("Got server protocols: " , req.text)
-    elif req.status_code == 500:
-        print("No match found")
-        sys.exit(1)
+        print("Request protocols: ", req.text)
+    if req.status_code == 500:
+        print("Couldn't agree on protocols, exiting now...")
+        sys.exit(0)
+
+    ##################################### DIFFIE-HELLMAN #####################################
+
+    #----/ Generate Client Keys /----#
+    print('Generating keys...')
+    pubk, privk = generate_public_and_private_keys()
+
+    #----/ Send Public Key /----#
+    print('Sending public key to server')
+    server_params = send_pubk(pubk)
+
+    #----/ Build Server Public Key based on response parameters /----#
+    server_pubk = get_server_public_key(server_params)
+
+    #----/ Perform key exchange and derivation /----#
+    derived_key = exchange_keys(privk, server_pubk)
+
+    ##########################################################################################
 
     req = requests.get(f'{SERVER_URL}/api/list')
     if req.status_code == 200:
@@ -43,8 +167,7 @@ def main():
 
     media_list = req.json()
 
-
-    # Present a simple selection menu    
+    # Present a simple selection menu
     idx = 0
     print("MEDIA CATALOG\n")
     for item in media_list:
@@ -71,15 +194,17 @@ def main():
     # You need to have ffplay or ffplay.exe in the current folder
     # In alternative, provide the full path to the executable
     if os.name == 'nt':
-        proc = subprocess.Popen(['ffplay.exe', '-i', '-'], stdin=subprocess.PIPE)
+        proc = subprocess.Popen(
+            ['ffplay.exe', '-i', '-'], stdin=subprocess.PIPE)
     else:
         proc = subprocess.Popen(['ffplay', '-i', '-'], stdin=subprocess.PIPE)
 
     # Get data from server and send it to the ffplay stdin through a pipe
     for chunk in range(media_item['chunks'] + 1):
-        req = requests.get(f'{SERVER_URL}/api/download?id={media_item["id"]}&chunk={chunk}')
+        req = requests.get(
+            f'{SERVER_URL}/api/download?id={media_item["id"]}&chunk={chunk}')
         chunk = req.json()
-       
+
         # TODO: Process chunk
 
         data = binascii.a2b_base64(chunk['data'].encode('latin'))
@@ -87,6 +212,7 @@ def main():
             proc.stdin.write(data)
         except:
             break
+
 
 if __name__ == '__main__':
     while True:
