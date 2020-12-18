@@ -70,7 +70,6 @@ class MediaServer(resource.Resource):
         return json.dumps(media_list, indent=4).encode('latin')
 
     # Send a media chunk to the client
-
     def do_download(self, request):
         logger.debug(f'Download: args: {request.args}')
 
@@ -129,6 +128,7 @@ class MediaServer(resource.Resource):
             
             encrypted_chunk, iv = self.encrypt_chunk(data, str(chunk_id) + media_id)
 
+            print("str(chunk_id) + media_id", str(chunk_id) + media_id)
             return json.dumps(
                 {
                     'media_id': media_id,
@@ -197,6 +197,62 @@ class MediaServer(resource.Resource):
         hash_mode = matched_hash
 
         return json.dumps({"Algorithm": matched_alg, "Mode": matched_mode, "Hash": matched_hash}, indent=4).encode('latin')
+    
+    def do_get_public_key(self, request):
+        """Receives the client's public key and sends server public key"""
+        global shared_key
+        #----/ Get client's public key parameters /----#
+        p, g, y = self.get_parameters(request)
+
+        #----/ Build client public key based on received parameters /----#
+        client_pubk = self.get_client_public_key(p, g, y)
+
+        #----/ Returns generated keys with same parameters as the client /----#
+        print('Generating server keys...')
+        pubk, privk = self.generate_public_and_private_keys(request)
+
+        #----/ Perform key exchange and derivation /----#
+        shared_key = self.exchange_keys(privk, client_pubk)
+        #----/ Dismantle parameters to send to client /----#
+        p, g, y = self.dismantle(pubk)
+
+        print("Sending key to client...")
+        return json.dumps({"p": p, "g": g, "y": y}, indent=4).encode('latin')
+
+    # Handle a GET request
+    def render_GET(self, request):
+        logger.debug(f'Received request for {request.uri}')
+        print(request.path)
+        try:
+            if request.path == b'/api/protocols':
+                return self.do_get_protocols(request)
+            elif request.path == b'/api/key':
+                return self.do_get_public_key(request)
+
+            # elif request.uri == 'api/auth':
+
+            elif request.path == b'/api/list':
+                return self.do_list(request)
+
+            elif request.path == b'/api/download':
+                return self.do_download(request)
+            else:
+                request.responseHeaders.addRawHeader(
+                    b"content-type", b'text/plain')
+                return b'Methods: /api/protocols /api/list /api/download'
+
+        except Exception as e:
+            logger.exception(e)
+            request.setResponseCode(500)
+            request.responseHeaders.addRawHeader(
+                b"content-type", b"text/plain")
+            return b''
+
+    # Handle a POST request
+    def render_POST(self, request):
+        logger.debug(f'Received POST for {request.uri}')
+        request.setResponseCode(501)
+        return b''
 
     def build(self, p, g, y):
         """Builds the key based on it's parameters (p,g,y)"""
@@ -266,6 +322,8 @@ class MediaServer(resource.Resource):
          
     def encrypt_chunk(self, data, chunk_media_id):
         derived_shared_key = self.derive_key(chunk_media_id)
+        print("derived_shared_key ", derived_shared_key)
+
         encrypted_data, iv = self.encryptAES(derived_shared_key, data)
         return encrypted_data, iv
 
@@ -288,65 +346,7 @@ class MediaServer(resource.Resource):
         decryptor = cipher.decryptor()
         return decryptor.update(msg) + decryptor.finalize()
 
-    def do_get_public_key(self, request):
-        """Receives the client's public key and sends server public key"""
-        global shared_key
-        #----/ Get client's public key parameters /----#
-        p, g, y = self.get_parameters(request)
-
-        #----/ Build client public key based on received parameters /----#
-        client_pubk = self.get_client_public_key(p, g, y)
-
-        #----/ Returns generated keys with same parameters as the client /----#
-        print('Generating server keys...')
-        pubk, privk = self.generate_public_and_private_keys(request)
-
-
-
-        #----/ Perform key exchange and derivation /----#
-        shared_key = self.exchange_keys(privk, client_pubk)
-        #----/ Dismantle parameters to send to client /----#
-        p, g, y = self.dismantle(pubk)
-
-        print("Sending key to client...")
-        return json.dumps({"p": p, "g": g, "y": y}, indent=4).encode('latin')
-
-    # Handle a GET request
-    def render_GET(self, request):
-        logger.debug(f'Received request for {request.uri}')
-        print(request.path)
-        try:
-            if request.path == b'/api/protocols':
-                return self.do_get_protocols(request)
-            elif request.path == b'/api/key':
-                return self.do_get_public_key(request)
-
-            # elif request.uri == 'api/auth':
-
-            elif request.path == b'/api/list':
-                return self.do_list(request)
-
-            elif request.path == b'/api/download':
-                return self.do_download(request)
-            else:
-                request.responseHeaders.addRawHeader(
-                    b"content-type", b'text/plain')
-                return b'Methods: /api/protocols /api/list /api/download'
-
-        except Exception as e:
-            logger.exception(e)
-            request.setResponseCode(500)
-            request.responseHeaders.addRawHeader(
-                b"content-type", b"text/plain")
-            return b''
-
-    # Handle a POST request
-    def render_POST(self, request):
-        logger.debug(f'Received POST for {request.uri}')
-        request.setResponseCode(501)
-        return b''
-
-
+    
 print("Server started")
 print("URL is: http://IP:8080")
 

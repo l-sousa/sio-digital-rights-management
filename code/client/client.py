@@ -245,28 +245,25 @@ def main():
     else:
         proc = subprocess.Popen(['ffplay', '-i', '-'], stdin=subprocess.PIPE)
 
-    with open("client_chunks.txt", "w") as out:
-        # Get data from server and send it to the ffplay stdin through a pipe
-        for chunk in range(media_item['chunks'] + 1):
-            req = requests.get(
-                f'{SERVER_URL}/api/download?id={media_item["id"]}&chunk={chunk}')
-            chunk = req.json()
 
-            # TODO: Process chunk
+    # Get data from server and send it to the ffplay stdin through a pipe
+    for chunk in range(media_item['chunks'] + 1):
+        chunk_id = chunk
+        req = requests.get(
+            f'{SERVER_URL}/api/download?id={media_item["id"]}&chunk={chunk}')
+        chunk = req.json()
 
-            derived_shared_key = derive_key(str(chunk) + media_item["id"])
+        # TODO: Process chunk
 
-            encrypted = binascii.a2b_base64(chunk['data'].encode('latin'))
-            iv = binascii.a2b_base64(chunk['iv'].encode('latin'))
-            decrypted = binascii.a2b_base64(str(decryptAES(derived_shared_key, iv, encrypted), 'utf-8').encode('latin'))
-
-            
-            
-            try:
-                proc.stdin.write(decrypted)
-            except:
-                break
-        out.close()
+        derived_shared_key = derive_key(str(chunk_id) + media_item["id"])
+        encrypted = binascii.a2b_base64(chunk['data'].encode('latin'))
+        iv = binascii.a2b_base64(chunk['iv'].encode('latin'))
+        decrypted = binascii.a2b_base64(str(decryptAES(derived_shared_key, iv, encrypted), 'utf-8').encode('latin'))
+        
+        try:
+            proc.stdin.write(decrypted)
+        except:
+            break
 
 
 if __name__ == '__main__':
