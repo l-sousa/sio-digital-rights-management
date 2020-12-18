@@ -81,9 +81,8 @@ def send_pubk(pubk):
 
     #----/ Send public key to server /----#
     print("Sending... ")
-    req = requests.get(f'{SERVER_URL}/api/pubk?p={p}&g={g}&y={y}')
-    print(req)
-
+    req = requests.get(f'{SERVER_URL}/api/key?p={p}&g={g}&y={y}')
+    
     #----/ Error /----#
     if req.status_code != 200:
         print("Error. Public key not sent.")
@@ -135,13 +134,12 @@ def main():
     MODE = ['CBC', 'GCM']
     HASH = ['SHA-256', 'SHA-512', 'MD5', 'BLAKE2b']
 
-    req = requests.get(
-        f'{SERVER_URL}/api/protocols?ALGORITHMS={ALGORITHMS}&Modes={MODE}&Digests={HASH}')
-    if req.status_code == 200:
-        print("Request protocols: ", req.text)
-    if req.status_code == 500:
-        print("Couldn't agree on protocols, exiting now...")
-        sys.exit(0)
+    req = requests.get(f'{SERVER_URL}/api/protocols?ALGORITHMS={ALGORITHMS}&Modes={MODE}&Digests={HASH}')
+    if req.status_code != 200:
+        print("Error. Couldn't agree on protocols")
+    
+    print("Request protocols: ", req.text)
+    
 
     ##################################### DIFFIE-HELLMAN #####################################
 
@@ -158,6 +156,8 @@ def main():
 
     #----/ Perform key exchange and derivation /----#
     derived_key = exchange_keys(privk, server_pubk)
+    print(derived_key)
+
 
     ##########################################################################################
 
