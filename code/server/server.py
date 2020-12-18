@@ -129,8 +129,6 @@ class MediaServer(resource.Resource):
         MODE = ['CBC', 'GCM']
         HASH = ['SHA-256', 'SHA-512', 'MD5', 'BLAKE2b']
 
-        print("ola")
-
         cli_alg = request.args[b'ALGORITHMS']
         cli_alg_d = cli_alg[0].decode('latin')
         cli_algs = cli_alg_d.strip('][').replace("'", "").split(', ')
@@ -147,6 +145,7 @@ class MediaServer(resource.Resource):
         for alg in cli_algs:
             if alg in ALGORITHMS:
                 matched_alg = alg
+                break
 
         if matched_alg is None:
             request.setResponseCode(500)
@@ -155,6 +154,7 @@ class MediaServer(resource.Resource):
         for mod in cli_mods:
             if mod in MODE:
                 matched_mode = mod
+                break
 
         if matched_mode is None:
             request.setResponseCode(500)
@@ -163,6 +163,7 @@ class MediaServer(resource.Resource):
         for h in cli_hashs:
             if h in HASH:
                 matched_hash = h
+                break
 
         if matched_hash is None:
             request.setResponseCode(500)
