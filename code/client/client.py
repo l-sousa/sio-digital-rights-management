@@ -126,14 +126,13 @@ def exchange_keys(privk, server_pubk):
     return derived
 
 
-def decryptAES(iv, msg):
+def decryptAES(derived_shared_key,iv, msg):
     global matched_mode
-    global shared_key
 
     if matched_mode == "OFB":
-        cipher = Cipher(algorithms.AES(shared_key), modes.OFB(iv))
+        cipher = Cipher(algorithms.AES(derived_shared_key), modes.OFB(iv), backend=default_backend())
     if matched_mode == "GCM":
-        cipher = Cipher(algorithms.AES(shared_key), modes.GCM(iv))
+        cipher = Cipher(algorithms.AES(derived_shared_key), modes.GCM(iv), backend=default_backend())
     decryptor = cipher.decryptor()
     return decryptor.update(msg) + decryptor.finalize()
 
@@ -152,6 +151,15 @@ def encryptAES(self, key, msg):
 
     return ct, iv
 
+def derive_key(data=None):
+        global shared_key
+        return HKDF(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=None,
+            info=b'handshake data' if not data else bytes(str(data), 'utf-8'),
+            backend=default_backend()
+        ).derive(shared_key)
 
 def main():
     global shared_key
@@ -237,21 +245,28 @@ def main():
     else:
         proc = subprocess.Popen(['ffplay', '-i', '-'], stdin=subprocess.PIPE)
 
-    # Get data from server and send it to the ffplay stdin through a pipe
-    for chunk in range(media_item['chunks'] + 1):
-        req = requests.get(
-            f'{SERVER_URL}/api/download?id={media_item["id"]}&chunk={chunk}')
-        chunk = req.json()
+    with open("client_chunks.txt", "w") as out:
+        # Get data from server and send it to the ffplay stdin through a pipe
+        for chunk in range(media_item['chunks'] + 1):
+            req = requests.get(
+                f'{SERVER_URL}/api/download?id={media_item["id"]}&chunk={chunk}')
+            chunk = req.json()
 
-        # TODO: Process chunk
+            # TODO: Process chunk
 
-        encrypted = binascii.a2b_base64(chunk['data'].encode('latin'))
-        iv = binascii.a2b_base64(chunk['iv'].encode('latin'))
-        decrypted = decryptAES(iv, encrypted)
-        try:
-            proc.stdin.write(decrypted)
-        except:
-            break
+            derived_shared_key = derive_key(str(chunk) + media_item["id"])
+
+            encrypted = binascii.a2b_base64(chunk['data'].encode('latin'))
+            iv = binascii.a2b_base64(chunk['iv'].encode('latin'))
+            decrypted = binascii.a2b_base64(str(decryptAES(derived_shared_key, iv, encrypted), 'utf-8').encode('latin'))
+
+            
+            
+            try:
+                proc.stdin.write(decrypted)
+            except:
+                break
+        out.close()
 
 
 if __name__ == '__main__':

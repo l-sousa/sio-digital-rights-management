@@ -121,14 +121,13 @@ class MediaServer(resource.Resource):
         with open(os.path.join(CATALOG_BASE, media_item['file_name']), 'rb') as f:
             f.seek(offset)
             data = f.read(CHUNK_SIZE)
-
+          
             request.responseHeaders.addRawHeader(
                 b"content-type", b"application/json")
 
             data = binascii.b2a_base64(data).decode('latin').strip()
             
             encrypted_chunk, iv = self.encrypt_chunk(data, str(chunk_id) + media_id)
-
 
             return json.dumps(
                 {
@@ -256,6 +255,7 @@ class MediaServer(resource.Resource):
 
     def derive_key(self, data=None):
         global shared_key
+        print("DATA>>>>>> ", data)
         return HKDF(
             algorithm=hashes.SHA256(),
             length=32,
@@ -264,10 +264,8 @@ class MediaServer(resource.Resource):
             backend=default_backend()
         ).derive(shared_key)
          
-
     def encrypt_chunk(self, data, chunk_media_id):
-        global shared_key 
-        shared_key = derived_shared_key = self.derive_key(chunk_media_id)
+        derived_shared_key = self.derive_key(chunk_media_id)
         encrypted_data, iv = self.encryptAES(derived_shared_key, data)
         return encrypted_data, iv
 
@@ -280,10 +278,9 @@ class MediaServer(resource.Resource):
             cipher = Cipher(algorithms.AES(key), modes.GCM(iv))
         encryptor = cipher.encryptor()
         ct = encryptor.update(bytes(msg, 'utf-8')) + encryptor.finalize()
-
         return ct, iv
 
-    def decript_AES(self, iv, key, msg, mode):
+    def decryptAES(self, iv, key, msg, mode):
         if mode == "OFB":
             cipher = Cipher(algorithms.AES(key), modes.OFB(iv))
         if mode == "GCM":
