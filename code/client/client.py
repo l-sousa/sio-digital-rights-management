@@ -130,9 +130,12 @@ def decryptAES(derived_shared_key,iv, msg):
     global matched_mode
 
     if matched_mode == "OFB":
-        cipher = Cipher(algorithms.AES(derived_shared_key), modes.OFB(iv), backend=default_backend())
-    if matched_mode == "GCM":
-        cipher = Cipher(algorithms.AES(derived_shared_key), modes.GCM(iv), backend=default_backend())
+        cipher = Cipher(algorithms.AES(derived_shared_key), modes.OFB(iv))
+    if matched_mode == "CTR":
+        cipher = Cipher(algorithms.AES(derived_shared_key), modes.CTR(iv))
+    if matched_mode == "CFB":
+        cipher = Cipher(algorithms.AES(derived_shared_key), modes.CFB(iv))
+
     decryptor = cipher.decryptor()
     return decryptor.update(msg) + decryptor.finalize()
 
@@ -144,8 +147,11 @@ def encryptAES(self, key, msg):
 
     if matched_mode == "OFB":
         cipher = Cipher(algorithms.AES(shared_key), modes.OFB(iv))
-    if matched_mode == "GCM":
-        cipher = Cipher(algorithms.AES(shared_key), modes.GCM(iv))
+    if matched_mode == "CTR":
+        cipher = Cipher(algorithms.AES(shared_key), modes.CTR(iv))
+    if matched_mode == "CFB":
+        cipher = Cipher(algorithms.AES(shared_key), modes.CFB(iv))
+
     encryptor = cipher.encryptor()
     ct = encryptor.update(bytes(msg, 'utf-8')) + encryptor.finalize()
 

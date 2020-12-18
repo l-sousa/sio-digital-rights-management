@@ -330,19 +330,32 @@ class MediaServer(resource.Resource):
     def encryptAES(self, key, msg):
         iv = os.urandom(16)
         global mode
+
         if mode == "OFB":
             cipher = Cipher(algorithms.AES(key), modes.OFB(iv))
-        if mode == "GCM":
-            cipher = Cipher(algorithms.AES(key), modes.GCM(iv))
+        if mode == "CTR":
+            cipher = Cipher(algorithms.AES(key), modes.CTR(iv)) 
+        if mode == "CFB":
+            cipher = Cipher(algorithms.AES(key), modes.CFB(iv))
+        if mode == "CBC":
+            cipher = Cipher(algorithms.AES(key), modes.CBC(iv)) 
         encryptor = cipher.encryptor()
         ct = encryptor.update(bytes(msg, 'utf-8')) + encryptor.finalize()
         return ct, iv
 
     def decryptAES(self, iv, key, msg, mode):
+        mode = "CBC"
+
         if mode == "OFB":
             cipher = Cipher(algorithms.AES(key), modes.OFB(iv))
         if mode == "GCM":
             cipher = Cipher(algorithms.AES(key), modes.GCM(iv))
+        if mode == "CTR":
+            cipher = Cipher(algorithms.AES(key), modes.CTR(iv))
+        if mode == "CFB":
+            cipher = Cipher(algorithms.AES(key), modes.CFB(iv))
+        if mode == "CBC":
+            cipher = Cipher(algorithms.AES(key), modes.CBC(iv)) 
         decryptor = cipher.decryptor()
         return decryptor.update(msg) + decryptor.finalize()
 
