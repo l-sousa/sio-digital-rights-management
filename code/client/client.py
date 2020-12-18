@@ -22,6 +22,10 @@ SERVER_URL = 'http://127.0.0.1:8080'
 ALGORITHMS = ['AES', 'CHACHA20']
 MODE = ['CBC', 'GCM']
 HASH = ['SHA-256', 'SHA-512', 'MD5', 'BLAKE2b']
+shared_key = None
+matched_mode = None
+matched_algo = None
+matched_hash = None
 
 
 def public_key_compose(p, g, y):
@@ -83,7 +87,7 @@ def send_pubk(pubk):
     #----/ Send public key to server /----#
     print("Sending... ")
     req = requests.get(f'{SERVER_URL}/api/key?p={p}&g={g}&y={y}')
-    
+
     #----/ Error /----#
     if req.status_code != 200:
         print("Error. Public key not sent.")
@@ -122,28 +126,38 @@ def exchange_keys(privk, server_pubk):
     return derived
 
 
-def encript_AES(key,msg,mode):
+def decryptAES(iv, msg):
+    global matched_mode
+    global shared_key
+
+    if matched_mode == "OFB":
+        cipher = Cipher(algorithms.AES(shared_key), modes.OFB(iv))
+    if matched_mode == "GCM":
+        cipher = Cipher(algorithms.AES(shared_key), modes.GCM(iv))
+    decryptor = cipher.decryptor()
+    return decryptor.update(msg) + decryptor.finalize()
+
+
+def encryptAES(self, key, msg):
+    global matched_mode
+    global shared_key
     iv = os.urandom(16)
-    if mode=="OFB":
-        cipher = Cipher(algorithms.AES(key), modes.OFB(iv))
-    if mode=="GCM":
-        cipher = Cipher(algorithms.AES(key), modes.GCM(iv))
+
+    if matched_mode == "OFB":
+        cipher = Cipher(algorithms.AES(shared_key), modes.OFB(iv))
+    if matched_mode == "GCM":
+        cipher = Cipher(algorithms.AES(shared_key), modes.GCM(iv))
     encryptor = cipher.encryptor()
     ct = encryptor.update(bytes(msg, 'utf-8')) + encryptor.finalize()
 
     return ct, iv
 
 
-def decript_AES(iv,key,msg,mode):
-    if mode=="OFB":
-        cipher = Cipher(algorithms.AES(key), modes.OFB(iv))
-    if mode=="GCM":
-        cipher = Cipher(algorithms.AES(key), modes.GCM(iv))
-    decryptor = cipher.decryptor()
-    return decryptor.update(msg) + decryptor.finalize()
-    
-
 def main():
+    global shared_key
+    global matched_mode
+    global matched_algo
+    global matched_hash
     print("|--------------------------------------|")
     print("|         SECURE MEDIA CLIENT          |")
     print("|--------------------------------------|\n")
@@ -151,19 +165,23 @@ def main():
     # Get a list of media files
     print("Contacting Server")
 
-    ##################################### CIPHER AGREEMENTS #####################################
+    print("##################################### CIPHER AGREEMENTS #####################################")
     ALGORITHMS = ['AES', 'CHACHA20']
     MODE = ['OFB', 'GCM']
     HASH = ['SHA-256', 'SHA-512', 'MD5', 'BLAKE2b']
 
-    req = requests.get(f'{SERVER_URL}/api/protocols?ALGORITHMS={ALGORITHMS}&Modes={MODE}&Digests={HASH}')
+    req = requests.get(
+        f'{SERVER_URL}/api/protocols?ALGORITHMS={ALGORITHMS}&Modes={MODE}&Digests={HASH}')
     if req.status_code != 200:
         print("Error. Couldn't agree on protocols")
-    
-    print("Request protocols: ", req.text)
-    
 
-    ##################################### DIFFIE-HELLMAN #####################################
+    print("Request protocols: ", req.text)
+    args = json.loads(req.text)
+    matched_algo = args["Algorithm"]
+    matched_mode = args["Mode"]
+    matched_hash = args["Hash"]
+
+    print("##################################### DIFFIE-HELLMAN #####################################")
 
     #----/ Generate Client Keys /----#
     print('Generating keys...')
@@ -177,11 +195,9 @@ def main():
     server_pubk = get_server_public_key(server_params)
 
     #----/ Perform key exchange and derivation /----#
-    derived_key = exchange_keys(privk, server_pubk)
-    print(derived_key)
+    shared_key = exchange_keys(privk, server_pubk)
 
-
-    ##########################################################################################
+    print("##################################### CHUNK PROCESSING #####################################")
 
     req = requests.get(f'{SERVER_URL}/api/list')
     if req.status_code == 200:
@@ -229,9 +245,11 @@ def main():
 
         # TODO: Process chunk
 
-        data = binascii.a2b_base64(chunk['data'].encode('latin'))
+        encrypted = binascii.a2b_base64(chunk['data'].encode('latin'))
+        iv = binascii.a2b_base64(chunk['iv'].encode('latin'))
+        decrypted = decryptAES(iv, encrypted)
         try:
-            proc.stdin.write(data)
+            proc.stdin.write(decrypted)
         except:
             break
 

@@ -126,8 +126,9 @@ class MediaServer(resource.Resource):
                 b"content-type", b"application/json")
 
             data = binascii.b2a_base64(data).decode('latin').strip()
-
+            
             encrypted_chunk, iv = self.encrypt_chunk(data, str(chunk_id) + media_id)
+
 
             return json.dumps(
                 {
@@ -149,7 +150,7 @@ class MediaServer(resource.Resource):
         global hash_mode
 
         ALGORITHMS = ['AES', 'CHACHA20']
-        MODE = ['CBC', 'GCM']
+        MODE = ['OFB', 'GCM']
         HASH = ['SHA-256', 'SHA-512', 'MD5', 'BLAKE2b']
 
         cli_alg = request.args[b'ALGORITHMS']
@@ -196,7 +197,7 @@ class MediaServer(resource.Resource):
         algorithm = matched_alg
         hash_mode = matched_hash
 
-        return json.dumps({"Algorithm": matched_alg, "Mode": matched_mode, "Hash:": matched_hash}, indent=4).encode('latin')
+        return json.dumps({"Algorithm": matched_alg, "Mode": matched_mode, "Hash": matched_hash}, indent=4).encode('latin')
 
     def build(self, p, g, y):
         """Builds the key based on it's parameters (p,g,y)"""
