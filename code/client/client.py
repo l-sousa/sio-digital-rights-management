@@ -2,6 +2,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.asymmetric import dh
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 import requests
 import logging
 import binascii
@@ -121,6 +122,27 @@ def exchange_keys(privk, server_pubk):
     return derived
 
 
+def encript_AES(key,msg,mode):
+    iv = os.urandom(16)
+    if mode=="OFB":
+        cipher = Cipher(algorithms.AES(key), modes.OFB(iv))
+    if mode=="GCM":
+        cipher = Cipher(algorithms.AES(key), modes.GCM(iv))
+    encryptor = cipher.encryptor()
+    ct = encryptor.update(bytes(msg, 'utf-8')) + encryptor.finalize()
+
+    return ct, iv
+
+
+def decript_AES(iv,key,msg,mode):
+    if mode=="OFB":
+        cipher = Cipher(algorithms.AES(key), modes.OFB(iv))
+    if mode=="GCM":
+        cipher = Cipher(algorithms.AES(key), modes.GCM(iv))
+    decryptor = cipher.decryptor()
+    return decryptor.update(msg) + decryptor.finalize()
+    
+
 def main():
     print("|--------------------------------------|")
     print("|         SECURE MEDIA CLIENT          |")
@@ -131,7 +153,7 @@ def main():
 
     ##################################### CIPHER AGREEMENTS #####################################
     ALGORITHMS = ['AES', 'CHACHA20']
-    MODE = ['CBC', 'GCM']
+    MODE = ['OFB', 'GCM']
     HASH = ['SHA-256', 'SHA-512', 'MD5', 'BLAKE2b']
 
     req = requests.get(f'{SERVER_URL}/api/protocols?ALGORITHMS={ALGORITHMS}&Modes={MODE}&Digests={HASH}')
