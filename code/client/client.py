@@ -3,6 +3,7 @@ from cryptography.hazmat.primitives.asymmetric import dh
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives import hmac
 import requests
 import logging
 import binascii
@@ -26,7 +27,7 @@ shared_key = None
 matched_mode = None
 matched_algo = None
 matched_hash = None
-
+current_derived_key = None
 
 def public_key_compose(p, g, y):
     pn = dh.DHParameterNumbers(p, g)
@@ -159,13 +160,15 @@ def encryptAES(self, key, msg):
 
 def derive_key(data=None):
         global shared_key
-        return HKDF(
+        global current_derived_key
+        current_derived_key = HKDF(
             algorithm=hashes.SHA256(),
             length=32,
             salt=None,
             info=b'handshake data' if not data else bytes(str(data), 'utf-8'),
             backend=default_backend()
         ).derive(shared_key)
+        return current_derived_key
 
 def main():
     global shared_key
@@ -266,6 +269,17 @@ def main():
         iv = binascii.a2b_base64(chunk['iv'].encode('latin'))
         decrypted = binascii.a2b_base64(str(decryptAES(derived_shared_key, iv, encrypted), 'utf-8').encode('latin'))
         
+        recv_hmac = binascii.a2b_base64(chunk['hmac'].encode('latin'))
+
+        h = hmac.HMAC(current_derived_key, hashes.SHA256())
+        h.update(encrypted)
+
+        try:
+            h.verify(bytes(recv_hmac))
+        except: 
+            print("Chunk has been tampered with!")
+            break
+
         try:
             proc.stdin.write(decrypted)
         except:

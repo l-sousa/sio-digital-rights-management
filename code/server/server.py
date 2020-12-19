@@ -6,7 +6,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.backends.interfaces import DHBackend
 from cryptography.hazmat.primitives.asymmetric import dh
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives import hashes, hmac
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 import logging
 import binascii
@@ -19,7 +19,7 @@ shared_key = None
 mode = None
 algorithm = None
 hash_mode = None
-
+current_derived_key = None
 
 logger = logging.getLogger('root')
 FORMAT = "[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s"
@@ -127,14 +127,15 @@ class MediaServer(resource.Resource):
             data = binascii.b2a_base64(data).decode('latin').strip()
             
             encrypted_chunk, iv = self.encrypt_chunk(data, str(chunk_id) + media_id)
-
-            print("str(chunk_id) + media_id", str(chunk_id) + media_id)
+            hmac = self.generate_hmac(encrypted_chunk)
+        
             return json.dumps(
                 {
                     'media_id': media_id,
                     'chunk': chunk_id,
                     'data': binascii.b2a_base64(encrypted_chunk).decode('latin').strip(),
                     'iv': binascii.b2a_base64(iv).decode('latin').strip(),
+                    'hmac': binascii.b2a_base64(hmac).decode('latin').strip()
                 }, indent=4
             ).encode('latin')
 
@@ -312,14 +313,17 @@ class MediaServer(resource.Resource):
     def derive_key(self, data=None):
         global shared_key
         print("DATA>>>>>> ", data)
-        return HKDF(
+        global current_derived_key
+        current_derived_key = HKDF(
             algorithm=hashes.SHA256(),
             length=32,
             salt=None,
             info=b'handshake data' if not data else bytes(str(data), 'utf-8'),
             backend=default_backend()
         ).derive(shared_key)
-         
+        
+        return current_derived_key
+
     def encrypt_chunk(self, data, chunk_media_id):
         derived_shared_key = self.derive_key(chunk_media_id)
         print("derived_shared_key ", derived_shared_key)
@@ -344,12 +348,8 @@ class MediaServer(resource.Resource):
         return ct, iv
 
     def decryptAES(self, iv, key, msg, mode):
-        mode = "CBC"
-
         if mode == "OFB":
             cipher = Cipher(algorithms.AES(key), modes.OFB(iv))
-        if mode == "GCM":
-            cipher = Cipher(algorithms.AES(key), modes.GCM(iv))
         if mode == "CTR":
             cipher = Cipher(algorithms.AES(key), modes.CTR(iv))
         if mode == "CFB":
@@ -359,6 +359,11 @@ class MediaServer(resource.Resource):
         decryptor = cipher.decryptor()
         return decryptor.update(msg) + decryptor.finalize()
 
+    def generate_hmac(self, encrypted_cunk):
+        global current_derived_key 
+        h = hmac.HMAC(current_derived_key, hashes.SHA256())
+        h.update(encrypted_cunk)
+        return h.finalize()
     
 print("Server started")
 print("URL is: http://IP:8080")
