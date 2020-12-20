@@ -149,8 +149,8 @@ class MediaServer(resource.Resource):
         global algorithm
         global hash_mode
 
-        ALGORITHMS = ['AES', 'CHACHA20']
-        MODE = ['OFB', 'GCM']
+        ALGORITHMS = ['AES', 'Camellia']
+        MODE = ['CTR']
         HASH = ['SHA-256', 'SHA-512', 'MD5', 'BLAKE2b']
 
         cli_alg = request.args[b'ALGORITHMS']
@@ -325,10 +325,14 @@ class MediaServer(resource.Resource):
         return current_derived_key
 
     def encrypt_chunk(self, data, chunk_media_id):
+        global matched_alg
         derived_shared_key = self.derive_key(chunk_media_id)
         print("derived_shared_key ", derived_shared_key)
-
-        encrypted_data, iv = self.encryptAES(derived_shared_key, data)
+        matched_alg = "Camellia"
+        if matched_alg == "AES":
+            encrypted_data, iv = self.encryptAES(derived_shared_key, data)
+        if matched_alg == "Camellia":
+            encrypted_data, iv = self.encryptCamellia(derived_shared_key, data)
         return encrypted_data, iv
 
     def encryptAES(self, key, msg):
@@ -364,6 +368,37 @@ class MediaServer(resource.Resource):
         h = hmac.HMAC(current_derived_key, hashes.SHA256())
         h.update(encrypted_cunk)
         return h.finalize()
+
+    def decryptCamellia(derived_shared_key,iv, msg):
+        global mode
+
+        if mode == "OFB":
+            cipher = Cipher(algorithms.Camellia(derived_shared_key), modes.OFB(iv))
+        if mode == "CTR":
+            cipher = Cipher(algorithms.Camellia(derived_shared_key), modes.CTR(iv))
+        if  mode == "CFB":
+            cipher = Cipher(algorithms.Camellia(derived_shared_key), modes.CFB(iv))
+
+        decryptor = cipher.decryptor()
+        return decryptor.update(msg) + decryptor.finalize()
+
+
+    def encryptCamellia(self, key, msg):
+        global mode
+        global shared_key
+        iv = os.urandom(16)
+
+        if mode == "OFB":
+            cipher = Cipher(algorithms.Camellia(shared_key), modes.OFB(iv))
+        if mode == "CTR":
+            cipher = Cipher(algorithms.Camellia(shared_key), modes.CTR(iv))
+        if mode == "CFB":
+            cipher = Cipher(algorithms.Camellia(shared_key), modes.CFB(iv))
+
+        encryptor = cipher.encryptor()
+        ct = encryptor.update(bytes(msg, 'utf-8')) + encryptor.finalize()
+
+        return ct, iv
     
 print("Server started")
 print("URL is: http://IP:8080")

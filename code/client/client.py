@@ -20,8 +20,8 @@ logger.setLevel(logging.INFO)
 
 SERVER_URL = 'http://127.0.0.1:8080'
 
-ALGORITHMS = ['AES', 'CHACHA20']
-MODE = ['CBC', 'GCM']
+ALGORITHMS = ['AES', 'Camellia']
+MODE = ['CTR', 'GCM']
 HASH = ['SHA-256', 'SHA-512', 'MD5', 'BLAKE2b']
 shared_key = None
 matched_mode = None
@@ -127,6 +127,37 @@ def exchange_keys(privk, server_pubk):
     return derived
 
 
+def decryptCamellia(derived_shared_key,iv, msg):
+    global matched_mode
+
+    if matched_mode == "OFB":
+        cipher = Cipher(algorithms.Camellia(derived_shared_key), modes.OFB(iv))
+    if matched_mode == "CTR":
+        cipher = Cipher(algorithms.Camellia(derived_shared_key), modes.CTR(iv))
+    if matched_mode == "CFB":
+        cipher = Cipher(algorithms.Camellia(derived_shared_key), modes.CFB(iv))
+
+    decryptor = cipher.decryptor()
+    return decryptor.update(msg) + decryptor.finalize()
+
+
+def encryptCamellia(self, key, msg):
+    global matched_mode
+    global shared_key
+    iv = os.urandom(16)
+
+    if matched_mode == "OFB":
+        cipher = Cipher(algorithms.Camellia(shared_key), modes.OFB(iv))
+    if matched_mode == "CTR":
+        cipher = Cipher(algorithms.Camellia(shared_key), modes.CTR(iv))
+    if matched_mode == "CFB":
+        cipher = Cipher(algorithms.Camellia(shared_key), modes.CFB(iv))
+
+    encryptor = cipher.encryptor()
+    ct = encryptor.update(bytes(msg, 'utf-8')) + encryptor.finalize()
+
+    return ct, iv
+
 def decryptAES(derived_shared_key,iv, msg):
     global matched_mode
 
@@ -184,7 +215,7 @@ def main():
 
     print("##################################### CIPHER AGREEMENTS #####################################")
     ALGORITHMS = ['AES', 'CHACHA20']
-    MODE = ['OFB', 'GCM']
+    MODE = ['CTR', 'GCM']
     HASH = ['SHA-256', 'SHA-512', 'MD5', 'BLAKE2b']
 
     req = requests.get(
@@ -267,7 +298,11 @@ def main():
         derived_shared_key = derive_key(str(chunk_id) + media_item["id"])
         encrypted = binascii.a2b_base64(chunk['data'].encode('latin'))
         iv = binascii.a2b_base64(chunk['iv'].encode('latin'))
-        decrypted = binascii.a2b_base64(str(decryptAES(derived_shared_key, iv, encrypted), 'utf-8').encode('latin'))
+        matched_alg="Camellia"
+        if matched_alg == "Camellia":
+            decrypted = binascii.a2b_base64(str(decryptCamellia(derived_shared_key, iv, encrypted), 'utf-8').encode('latin'))
+        if matched_alg == "AES":
+            decrypted = binascii.a2b_base64(str(decryptAES(derived_shared_key, iv, encrypted), 'utf-8').encode('latin'))
         
         recv_hmac = binascii.a2b_base64(chunk['hmac'].encode('latin'))
 
