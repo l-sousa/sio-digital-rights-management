@@ -149,8 +149,8 @@ class MediaServer(resource.Resource):
         global algorithm
         global hash_mode
 
-        ALGORITHMS = ['AES', 'Camellia']
-        MODE = ['CTR']
+        ALGORITHMS = ['CHACHA20','AES']
+        MODE = ['CFB']
         HASH = ['SHA-256', 'SHA-512', 'MD5', 'BLAKE2b']
 
         cli_alg = request.args[b'ALGORITHMS']
@@ -314,6 +314,8 @@ class MediaServer(resource.Resource):
         global shared_key
         print("DATA>>>>>> ", data)
         global current_derived_key
+        global algorithm
+        
         current_derived_key = HKDF(
             algorithm=hashes.SHA256(),
             length=32,
@@ -321,18 +323,17 @@ class MediaServer(resource.Resource):
             info=b'handshake data' if not data else bytes(str(data), 'utf-8'),
             backend=default_backend()
         ).derive(shared_key)
-        
+
         return current_derived_key
 
     def encrypt_chunk(self, data, chunk_media_id):
-        global matched_alg
+        global algorithm
         derived_shared_key = self.derive_key(chunk_media_id)
         print("derived_shared_key ", derived_shared_key)
-        matched_alg = "Camellia"
-        if matched_alg == "AES":
+        if algorithm == "AES":
             encrypted_data, iv = self.encryptAES(derived_shared_key, data)
-        if matched_alg == "Camellia":
-            encrypted_data, iv = self.encryptCamellia(derived_shared_key, data)
+        if algorithm == "CHACHA20":
+            encrypted_data, iv = self.encryptChaCha20(derived_shared_key, data)
         return encrypted_data, iv
 
     def encryptAES(self, key, msg):
@@ -369,36 +370,49 @@ class MediaServer(resource.Resource):
         h.update(encrypted_cunk)
         return h.finalize()
 
-    def decryptCamellia(derived_shared_key,iv, msg):
+    def decryptChaCha20(self,derived_shared_key,nonce, msg):
         global mode
 
-        if mode == "OFB":
-            cipher = Cipher(algorithms.Camellia(derived_shared_key), modes.OFB(iv))
-        if mode == "CTR":
-            cipher = Cipher(algorithms.Camellia(derived_shared_key), modes.CTR(iv))
-        if  mode == "CFB":
-            cipher = Cipher(algorithms.Camellia(derived_shared_key), modes.CFB(iv))
+        # if mode == "OFB":
+        #     cipher = Cipher(algorithms.TripleDES(derived_shared_key), modes.OFB(iv))
+        # if mode == "CTR":
+        #     cipher = Cipher(algorithms.TripleDES(derived_shared_key), modes.CTR(iv))
+        # if mode == "CFB":
+        #     cipher = Cipher(algorithms.TripleDES(derived_shared_key), modes.CFB(iv))
 
+        # decryptor = cipher.decryptor()
+        # return decryptor.update(msg) + decryptor.finalize()
+        algorithm = algorithms.ChaCha20(derived_shared_key, nonce)
+        cipher = Cipher(algorithm, mode=CFB)
         decryptor = cipher.decryptor()
-        return decryptor.update(msg) + decryptor.finalize()
+
+        return decryptor.update(msg)
 
 
-    def encryptCamellia(self, key, msg):
+    def encryptChaCha20(self, key, msg):
         global mode
-        global shared_key
-        iv = os.urandom(16)
+        global current_derived_key
 
-        if mode == "OFB":
-            cipher = Cipher(algorithms.Camellia(shared_key), modes.OFB(iv))
-        if mode == "CTR":
-            cipher = Cipher(algorithms.Camellia(shared_key), modes.CTR(iv))
-        if mode == "CFB":
-            cipher = Cipher(algorithms.Camellia(shared_key), modes.CFB(iv))
-
+        nonce = os.urandom(16)
+        algorithm = algorithms.ChaCha20(current_derived_key, nonce)
+        cipher = Cipher(algorithm, mode=modes.CFB(nonce))
         encryptor = cipher.encryptor()
-        ct = encryptor.update(bytes(msg, 'utf-8')) + encryptor.finalize()
+        ct = encryptor.update(bytes(msg, 'utf-8'))
 
-        return ct, iv
+
+
+        # if mode == "OFB":
+        #     cipher = Cipher(algorithms.TripleDES(current_derived_key), modes.OFB(iv))
+        # if mode == "CTR":
+        #     cipher = Cipher(algorithms.TripleDES(current_derived_key), modes.CTR(iv))
+        # if mode == "CFB":
+        #     cipher = Cipher(algorithms.TripleDES(current_derived_key), modes.CFB(iv))
+
+        #encryptor = cipher.encryptor()
+        #ct = encryptor.update(bytes(msg, 'utf-8')) + encryptor.finalize()
+
+        return ct, nonce
+
     
 print("Server started")
 print("URL is: http://IP:8080")

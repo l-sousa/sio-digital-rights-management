@@ -20,12 +20,9 @@ logger.setLevel(logging.INFO)
 
 SERVER_URL = 'http://127.0.0.1:8080'
 
-ALGORITHMS = ['AES', 'Camellia']
-MODE = ['CTR', 'GCM']
-HASH = ['SHA-256', 'SHA-512', 'MD5', 'BLAKE2b']
 shared_key = None
 matched_mode = None
-matched_algo = None
+matched_alg = None
 matched_hash = None
 current_derived_key = None
 
@@ -127,36 +124,48 @@ def exchange_keys(privk, server_pubk):
     return derived
 
 
-def decryptCamellia(derived_shared_key,iv, msg):
-    global matched_mode
+    def decryptChaCha20(derived_shared_key,nonce, msg):
+        global matched_mode
 
-    if matched_mode == "OFB":
-        cipher = Cipher(algorithms.Camellia(derived_shared_key), modes.OFB(iv))
-    if matched_mode == "CTR":
-        cipher = Cipher(algorithms.Camellia(derived_shared_key), modes.CTR(iv))
-    if matched_mode == "CFB":
-        cipher = Cipher(algorithms.Camellia(derived_shared_key), modes.CFB(iv))
+        # if mode == "OFB":
+        #     cipher = Cipher(algorithms.TripleDES(derived_shared_key), modes.OFB(iv))
+        # if mode == "CTR":
+        #     cipher = Cipher(algorithms.TripleDES(derived_shared_key), modes.CTR(iv))
+        # if mode == "CFB":
+        #     cipher = Cipher(algorithms.TripleDES(derived_shared_key), modes.CFB(iv))
 
-    decryptor = cipher.decryptor()
-    return decryptor.update(msg) + decryptor.finalize()
+        # decryptor = cipher.decryptor()
+        # return decryptor.update(msg) + decryptor.finalize()
+        algorithm = algorithms.ChaCha20(derived_shared_key, nonce)
+        cipher = Cipher(algorithm, mode=modes.CFB(nonce))
+        decryptor = cipher.decryptor()
+        
+        return decryptor.update(msg)
 
 
-def encryptCamellia(self, key, msg):
-    global matched_mode
-    global shared_key
-    iv = os.urandom(16)
+    def encryptChaCha20(key, msg):
+        global matched_mode
+        global current_derived_key
 
-    if matched_mode == "OFB":
-        cipher = Cipher(algorithms.Camellia(shared_key), modes.OFB(iv))
-    if matched_mode == "CTR":
-        cipher = Cipher(algorithms.Camellia(shared_key), modes.CTR(iv))
-    if matched_mode == "CFB":
-        cipher = Cipher(algorithms.Camellia(shared_key), modes.CFB(iv))
+        nonce = os.urandom(16)
+        algorithm = algorithms.ChaCha20(current_derived_key, nonce)
+        cipher = Cipher(algorithm, mode=modes.CFB(nonce))
+        encryptor = cipher.encryptor()
+        ct = encryptor.update(bytes(msg, 'utf-8'))
 
-    encryptor = cipher.encryptor()
-    ct = encryptor.update(bytes(msg, 'utf-8')) + encryptor.finalize()
 
-    return ct, iv
+
+        # if mode == "OFB":
+        #     cipher = Cipher(algorithms.TripleDES(current_derived_key), modes.OFB(iv))
+        # if mode == "CTR":
+        #     cipher = Cipher(algorithms.TripleDES(current_derived_key), modes.CTR(iv))
+        # if mode == "CFB":
+        #     cipher = Cipher(algorithms.TripleDES(current_derived_key), modes.CFB(iv))
+
+        #encryptor = cipher.encryptor()
+        #ct = encryptor.update(bytes(msg, 'utf-8')) + encryptor.finalize()
+
+        return ct, nonce
 
 def decryptAES(derived_shared_key,iv, msg):
     global matched_mode
@@ -172,7 +181,7 @@ def decryptAES(derived_shared_key,iv, msg):
     return decryptor.update(msg) + decryptor.finalize()
 
 
-def encryptAES(self, key, msg):
+def encryptAES(key, msg):
     global matched_mode
     global shared_key
     iv = os.urandom(16)
@@ -190,21 +199,24 @@ def encryptAES(self, key, msg):
     return ct, iv
 
 def derive_key(data=None):
-        global shared_key
-        global current_derived_key
-        current_derived_key = HKDF(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=None,
-            info=b'handshake data' if not data else bytes(str(data), 'utf-8'),
-            backend=default_backend()
-        ).derive(shared_key)
-        return current_derived_key
+    global shared_key
+    global current_derived_key
+    global matched_alg
+
+    current_derived_key = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=None,
+        info=b'handshake data' if not data else bytes(str(data), 'utf-8'),
+        backend=default_backend()
+    ).derive(shared_key)
+
+    return current_derived_key
 
 def main():
     global shared_key
     global matched_mode
-    global matched_algo
+    global matched_alg
     global matched_hash
     print("|--------------------------------------|")
     print("|         SECURE MEDIA CLIENT          |")
@@ -214,8 +226,8 @@ def main():
     print("Contacting Server")
 
     print("##################################### CIPHER AGREEMENTS #####################################")
-    ALGORITHMS = ['AES', 'CHACHA20']
-    MODE = ['CTR', 'GCM']
+    ALGORITHMS = ['CHACHA20','AES']
+    MODE = ['CFB', 'GCM']
     HASH = ['SHA-256', 'SHA-512', 'MD5', 'BLAKE2b']
 
     req = requests.get(
@@ -225,7 +237,7 @@ def main():
 
     print("Request protocols: ", req.text)
     args = json.loads(req.text)
-    matched_algo = args["Algorithm"]
+    matched_alg = args["Algorithm"]
     matched_mode = args["Mode"]
     matched_hash = args["Hash"]
 
@@ -298,9 +310,8 @@ def main():
         derived_shared_key = derive_key(str(chunk_id) + media_item["id"])
         encrypted = binascii.a2b_base64(chunk['data'].encode('latin'))
         iv = binascii.a2b_base64(chunk['iv'].encode('latin'))
-        matched_alg="Camellia"
-        if matched_alg == "Camellia":
-            decrypted = binascii.a2b_base64(str(decryptCamellia(derived_shared_key, iv, encrypted), 'utf-8').encode('latin'))
+        if matched_alg == "ChaCha20":
+            decrypted = binascii.a2b_base64(str(decryptChaCha20(derived_shared_key, iv, encrypted), 'utf-8').encode('latin'))
         if matched_alg == "AES":
             decrypted = binascii.a2b_base64(str(decryptAES(derived_shared_key, iv, encrypted), 'utf-8').encode('latin'))
         
