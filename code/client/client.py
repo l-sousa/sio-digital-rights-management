@@ -26,6 +26,7 @@ matched_alg = None
 matched_hash = None
 current_derived_key = None
 
+
 def public_key_compose(p, g, y):
     pn = dh.DHParameterNumbers(p, g)
     parameters = pn.parameters(backend=default_backend())
@@ -124,50 +125,32 @@ def exchange_keys(privk, server_pubk):
     return derived
 
 
-    def decryptChaCha20(derived_shared_key,nonce, msg):
-        global matched_mode
+def decryptChaCha20(derived_shared_key, nonce, msg):
+    global current_derived_key
 
-        # if mode == "OFB":
-        #     cipher = Cipher(algorithms.TripleDES(derived_shared_key), modes.OFB(iv))
-        # if mode == "CTR":
-        #     cipher = Cipher(algorithms.TripleDES(derived_shared_key), modes.CTR(iv))
-        # if mode == "CFB":
-        #     cipher = Cipher(algorithms.TripleDES(derived_shared_key), modes.CFB(iv))
-
-        # decryptor = cipher.decryptor()
-        # return decryptor.update(msg) + decryptor.finalize()
-        algorithm = algorithms.ChaCha20(derived_shared_key, nonce)
-        cipher = Cipher(algorithm, mode=modes.CFB(nonce))
-        decryptor = cipher.decryptor()
-        
-        return decryptor.update(msg)
+    algorithm = algorithms.ChaCha20(current_derived_key, nonce)
+    decryptor = Cipher(algorithm, None, default_backend()).decryptor()
+    return decryptor.update(msg)
 
 
-    def encryptChaCha20(key, msg):
-        global matched_mode
-        global current_derived_key
+def encryptChaCha20(key, msg, nonce=None):
+    global shared_key
+    print("dentro do chacha -------------")
 
+    if not nonce:
         nonce = os.urandom(16)
-        algorithm = algorithms.ChaCha20(current_derived_key, nonce)
-        cipher = Cipher(algorithm, mode=modes.CFB(nonce))
-        encryptor = cipher.encryptor()
-        ct = encryptor.update(bytes(msg, 'utf-8'))
+        print(len(nonce))
+    algorithm = algorithms.ChaCha20(key, nonce)
+    cipher = Cipher(algorithm, mode=None)
+    encryptor = cipher.encryptor()
+    ct = encryptor.update(bytes(msg, 'utf-8'))
 
+    if key == shared_key:
+        return ct
 
+    return ct, nonce
 
-        # if mode == "OFB":
-        #     cipher = Cipher(algorithms.TripleDES(current_derived_key), modes.OFB(iv))
-        # if mode == "CTR":
-        #     cipher = Cipher(algorithms.TripleDES(current_derived_key), modes.CTR(iv))
-        # if mode == "CFB":
-        #     cipher = Cipher(algorithms.TripleDES(current_derived_key), modes.CFB(iv))
-
-        #encryptor = cipher.encryptor()
-        #ct = encryptor.update(bytes(msg, 'utf-8')) + encryptor.finalize()
-
-        return ct, nonce
-
-def decryptAES(derived_shared_key,iv, msg):
+def decryptAES(derived_shared_key, iv, msg):
     global matched_mode
 
     if matched_mode == "OFB":
@@ -181,10 +164,12 @@ def decryptAES(derived_shared_key,iv, msg):
     return decryptor.update(msg) + decryptor.finalize()
 
 
-def encryptAES(key, msg):
+def encryptAES(key, msg, iv=None):
     global matched_mode
     global shared_key
-    iv = os.urandom(16)
+
+    if not iv:
+        iv = os.urandom(16)
 
     if matched_mode == "OFB":
         cipher = Cipher(algorithms.AES(shared_key), modes.OFB(iv))
@@ -196,7 +181,11 @@ def encryptAES(key, msg):
     encryptor = cipher.encryptor()
     ct = encryptor.update(bytes(msg, 'utf-8')) + encryptor.finalize()
 
+    if shared_key == key:
+        return ct
+
     return ct, iv
+
 
 def derive_key(data=None):
     global shared_key
@@ -213,6 +202,7 @@ def derive_key(data=None):
 
     return current_derived_key
 
+
 def main():
     global shared_key
     global matched_mode
@@ -226,7 +216,7 @@ def main():
     print("Contacting Server")
 
     print("##################################### CIPHER AGREEMENTS #####################################")
-    ALGORITHMS = ['CHACHA20','AES']
+    ALGORITHMS = ['CHACHA20', 'AES']
     MODE = ['CFB', 'GCM']
     HASH = ['SHA-256', 'SHA-512', 'MD5', 'BLAKE2b']
 
@@ -241,7 +231,16 @@ def main():
     matched_mode = args["Mode"]
     matched_hash = args["Hash"]
 
-    print("##################################### DIFFIE-HELLMAN #####################################")
+    print("################################# CERTIFICATE AUTHENTICATION ###############################")
+    
+    #----/ Request Server's Certificate /----#
+    eq = requests.get(f'{SERVER_URL}/api/auth')
+
+
+
+
+
+    print("##################################### DIFFIE-HELLMAN #######################################")
 
     #----/ Generate Client Keys /----#
     print('Generating keys...')
@@ -297,7 +296,6 @@ def main():
     else:
         proc = subprocess.Popen(['ffplay', '-i', '-'], stdin=subprocess.PIPE)
 
-
     # Get data from server and send it to the ffplay stdin through a pipe
     for chunk in range(media_item['chunks'] + 1):
         chunk_id = chunk
@@ -308,24 +306,35 @@ def main():
         # TODO: Process chunk
 
         derived_shared_key = derive_key(str(chunk_id) + media_item["id"])
-        encrypted = binascii.a2b_base64(chunk['data'].encode('latin'))
-        iv = binascii.a2b_base64(chunk['iv'].encode('latin'))
-        if matched_alg == "ChaCha20":
-            decrypted = binascii.a2b_base64(str(decryptChaCha20(derived_shared_key, iv, encrypted), 'utf-8').encode('latin'))
-        if matched_alg == "AES":
-            decrypted = binascii.a2b_base64(str(decryptAES(derived_shared_key, iv, encrypted), 'utf-8').encode('latin'))
         
-        recv_hmac = binascii.a2b_base64(chunk['hmac'].encode('latin'))
+        if matched_alg == "CHACHA20":
+            json_nonce = binascii.a2b_base64(chunk['json_nonce'].encode('latin'))
+            print(type(json_nonce))
+            encrypted = binascii.a2b_base64(chunk[binascii.b2a_base64(encryptChaCha20(shared_key, 'data', json_nonce)).decode('latin').strip()].encode('latin'))
+            iv = binascii.a2b_base64(chunk[binascii.b2a_base64(encryptChaCha20(shared_key, 'iv', json_nonce)).decode('latin').strip()].encode('latin'))
+            decrypted = binascii.a2b_base64(
+                str(decryptChaCha20(derived_shared_key, iv, encrypted), 'utf-8').encode('latin'))
+
+            recv_hmac = binascii.a2b_base64(chunk[binascii.b2a_base64(encryptChaCha20(shared_key, 'hmac', json_nonce)).decode('latin').strip()].encode('latin'))
+        if matched_alg == "AES":
+            json_iv = binascii.a2b_base64(chunk['json_iv'].encode('latin'))
+            encrypted = binascii.a2b_base64(chunk[binascii.b2a_base64(encryptAES(shared_key, 'data', json_iv)).decode('latin').strip()].encode('latin'))
+            iv = binascii.a2b_base64(chunk[binascii.b2a_base64(encryptAES(shared_key, 'iv', json_iv)).decode('latin').strip()].encode('latin'))
+            decrypted = binascii.a2b_base64(
+                str(decryptAES(derived_shared_key, iv, encrypted), 'utf-8').encode('latin'))
+
+            recv_hmac = binascii.a2b_base64(chunk[binascii.b2a_base64(encryptAES(shared_key, 'hmac', json_iv)).decode('latin').strip()].encode('latin'))
 
         h = hmac.HMAC(current_derived_key, hashes.SHA256())
         h.update(encrypted)
 
         try:
             h.verify(bytes(recv_hmac))
-        except: 
+        except:
+            print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
             print("Chunk has been tampered with!")
+            print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
             break
-
         try:
             proc.stdin.write(decrypted)
         except:

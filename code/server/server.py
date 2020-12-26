@@ -71,6 +71,8 @@ class MediaServer(resource.Resource):
 
     # Send a media chunk to the client
     def do_download(self, request):
+        global algorithm
+        global shared_key
         logger.debug(f'Download: args: {request.args}')
 
         media_id = request.args.get(b'id', [None])[0]
@@ -125,19 +127,44 @@ class MediaServer(resource.Resource):
                 b"content-type", b"application/json")
 
             data = binascii.b2a_base64(data).decode('latin').strip()
-            
-            encrypted_chunk, iv = self.encrypt_chunk(data, str(chunk_id) + media_id)
+
+            chunk_media_id = str(chunk_id) + media_id
+
+            derived_shared_key = self.derive_key(chunk_media_id)
+            print("derived_shared_key ", derived_shared_key)
+
+            encrypted_chunk, iv = self.encrypt_chunk(derived_shared_key, data, chunk_media_id)
             hmac = self.generate_hmac(encrypted_chunk)
-        
-            return json.dumps(
-                {
-                    'media_id': media_id,
-                    'chunk': chunk_id,
-                    'data': binascii.b2a_base64(encrypted_chunk).decode('latin').strip(),
-                    'iv': binascii.b2a_base64(iv).decode('latin').strip(),
-                    'hmac': binascii.b2a_base64(hmac).decode('latin').strip()
-                }, indent=4
-            ).encode('latin')
+
+            if algorithm == "AES":
+                json_iv = os.urandom(16)
+
+                ret = json.dumps(
+                    {
+                        binascii.b2a_base64(self.encryptAES(shared_key, 'media_id', json_iv)).decode('latin').strip(): media_id,
+                        binascii.b2a_base64(self.encryptAES(shared_key, 'chunk', json_iv)).decode('latin').strip(): chunk_id,
+                        binascii.b2a_base64(self.encryptAES(shared_key, 'data', json_iv)).decode('latin').strip(): binascii.b2a_base64(encrypted_chunk).decode('latin'),
+                        binascii.b2a_base64(self.encryptAES(shared_key, 'iv', json_iv)).decode('latin').strip(): binascii.b2a_base64(iv).decode('latin'),
+                        binascii.b2a_base64(self.encryptAES(shared_key, 'hmac', json_iv)).decode('latin').strip(): binascii.b2a_base64(hmac).decode('latin'),
+                        'json_iv': binascii.b2a_base64(json_iv).decode('latin'),
+                    }, indent=4
+                ).encode('latin')
+            
+            if algorithm == "CHACHA20":
+                json_nonce = os.urandom(16)
+                print("json nonce <><< ", json_nonce)
+                ret = json.dumps(
+                    {
+                        binascii.b2a_base64(self.encryptChaCha20(shared_key, 'media_id', json_nonce)).decode('latin').strip(): media_id,
+                        binascii.b2a_base64(self.encryptChaCha20(shared_key, 'chunk', json_nonce)).decode('latin').strip(): chunk_id,
+                        binascii.b2a_base64(self.encryptChaCha20(shared_key, 'data', json_nonce)).decode('latin').strip(): binascii.b2a_base64(encrypted_chunk).decode('latin'),
+                        binascii.b2a_base64(self.encryptChaCha20(shared_key, 'iv', json_nonce)).decode('latin').strip(): binascii.b2a_base64(iv).decode('latin'),
+                        binascii.b2a_base64(self.encryptChaCha20(shared_key, 'hmac', json_nonce)).decode('latin').strip(): binascii.b2a_base64(hmac).decode('latin'),
+                        'json_nonce': binascii.b2a_base64(json_nonce).decode('latin'),
+                    }, indent=4
+                ).encode('latin')
+
+            return ret
 
         # File was not open?
         request.responseHeaders.addRawHeader(
@@ -149,7 +176,7 @@ class MediaServer(resource.Resource):
         global algorithm
         global hash_mode
 
-        ALGORITHMS = ['CHACHA20','AES']
+        ALGORITHMS = ['CHACHA20']
         MODE = ['CFB']
         HASH = ['SHA-256', 'SHA-512', 'MD5', 'BLAKE2b']
 
@@ -214,6 +241,7 @@ class MediaServer(resource.Resource):
 
         #----/ Perform key exchange and derivation /----#
         shared_key = self.exchange_keys(privk, client_pubk)
+
         #----/ Dismantle parameters to send to client /----#
         p, g, y = self.dismantle(pubk)
 
@@ -229,12 +257,10 @@ class MediaServer(resource.Resource):
                 return self.do_get_protocols(request)
             elif request.path == b'/api/key':
                 return self.do_get_public_key(request)
-
-            # elif request.uri == 'api/auth':
-
+            elif request.path == b'/api/auth':
+                return self.go_get_certificate(request)
             elif request.path == b'/api/list':
                 return self.do_list(request)
-
             elif request.path == b'/api/download':
                 return self.do_download(request)
             else:
@@ -326,19 +352,20 @@ class MediaServer(resource.Resource):
 
         return current_derived_key
 
-    def encrypt_chunk(self, data, chunk_media_id):
+    def encrypt_chunk(self, key, data, chunk_media_id):
         global algorithm
-        derived_shared_key = self.derive_key(chunk_media_id)
-        print("derived_shared_key ", derived_shared_key)
         if algorithm == "AES":
-            encrypted_data, iv = self.encryptAES(derived_shared_key, data)
+            encrypted_data, iv = self.encryptAES(key, data)
         if algorithm == "CHACHA20":
-            encrypted_data, iv = self.encryptChaCha20(derived_shared_key, data)
+            encrypted_data, iv = self.encryptChaCha20(key, data)
         return encrypted_data, iv
 
-    def encryptAES(self, key, msg):
-        iv = os.urandom(16)
+    def encryptAES(self, key, msg, iv=None):
         global mode
+        global shared_key
+
+        if not iv:
+            iv = os.urandom(16)
 
         if mode == "OFB":
             cipher = Cipher(algorithms.AES(key), modes.OFB(iv))
@@ -350,6 +377,10 @@ class MediaServer(resource.Resource):
             cipher = Cipher(algorithms.AES(key), modes.CBC(iv)) 
         encryptor = cipher.encryptor()
         ct = encryptor.update(bytes(msg, 'utf-8')) + encryptor.finalize()
+
+        if key == shared_key:
+            return ct
+
         return ct, iv
 
     def decryptAES(self, iv, key, msg, mode):
@@ -370,46 +401,24 @@ class MediaServer(resource.Resource):
         h.update(encrypted_cunk)
         return h.finalize()
 
-    def decryptChaCha20(self,derived_shared_key,nonce, msg):
-        global mode
-
-        # if mode == "OFB":
-        #     cipher = Cipher(algorithms.TripleDES(derived_shared_key), modes.OFB(iv))
-        # if mode == "CTR":
-        #     cipher = Cipher(algorithms.TripleDES(derived_shared_key), modes.CTR(iv))
-        # if mode == "CFB":
-        #     cipher = Cipher(algorithms.TripleDES(derived_shared_key), modes.CFB(iv))
-
-        # decryptor = cipher.decryptor()
-        # return decryptor.update(msg) + decryptor.finalize()
-        algorithm = algorithms.ChaCha20(derived_shared_key, nonce)
-        cipher = Cipher(algorithm, mode=CFB)
-        decryptor = cipher.decryptor()
-
-        return decryptor.update(msg)
-
-
-    def encryptChaCha20(self, key, msg):
-        global mode
+    def decryptChaCha20(self, derived_shared_key, nonce, msg):
         global current_derived_key
 
-        nonce = os.urandom(16)
-        algorithm = algorithms.ChaCha20(current_derived_key, nonce)
-        cipher = Cipher(algorithm, mode=modes.CFB(nonce))
+        algorithm = algorithms.ChaCha20(shared_key, nonce)
+        decryptor = Cipher(algorithm, None, default_backend()).decryptor()
+        return decryptor.update(msg)
+
+    def encryptChaCha20(self, key, msg, nonce=None):
+        global shared_key
+        if not nonce:
+            nonce = os.urandom(16)
+        algorithm = algorithms.ChaCha20(key, nonce)
+        cipher = Cipher(algorithm, mode=None)
         encryptor = cipher.encryptor()
         ct = encryptor.update(bytes(msg, 'utf-8'))
 
-
-
-        # if mode == "OFB":
-        #     cipher = Cipher(algorithms.TripleDES(current_derived_key), modes.OFB(iv))
-        # if mode == "CTR":
-        #     cipher = Cipher(algorithms.TripleDES(current_derived_key), modes.CTR(iv))
-        # if mode == "CFB":
-        #     cipher = Cipher(algorithms.TripleDES(current_derived_key), modes.CFB(iv))
-
-        #encryptor = cipher.encryptor()
-        #ct = encryptor.update(bytes(msg, 'utf-8')) + encryptor.finalize()
+        if key == shared_key:
+            return ct
 
         return ct, nonce
 
