@@ -4,6 +4,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import hmac
+from cryptography import x509
 import requests
 import logging
 import binascii
@@ -12,6 +13,7 @@ import os
 import subprocess
 import time
 import sys
+import datetime
 
 logger = logging.getLogger('root')
 FORMAT = "[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s"
@@ -150,6 +152,7 @@ def encryptChaCha20(key, msg, nonce=None):
 
     return ct, nonce
 
+
 def decryptAES(derived_shared_key, iv, msg):
     global matched_mode
 
@@ -202,6 +205,20 @@ def derive_key(data=None):
 
     return current_derived_key
 
+def valid_cert_chain(chain, cert, roots):
+        chain.append(cert)
+        issuer = cert.issuer
+        subject = cert.subject
+
+        # Quando chegar à root (em self-signed certificates o issuer é igual ao subject)
+        if issuer == subject and subject in roots:
+            return True
+
+        if issuer in roots:
+            return valid_cert_chain(chain, roots[issuer], roots)
+
+        print("Invalid Chain!")
+        return False
 
 def main():
     global shared_key
@@ -215,6 +232,39 @@ def main():
     # Get a list of media files
     print("Contacting Server")
 
+    print("################################# CERTIFICATE AUTHENTICATION ###############################")
+
+    #----/ Request Server's Certificate /----#
+    req = requests.get(f'{SERVER_URL}/api/auth?opt={"get_cert"}')
+
+    if req.status_code != 200:
+        print("Error. Couldn't receive server certificate")
+        exit()
+
+    server_cert = req.json()
+    server_cert = server_cert['cert']
+    server_cert = binascii.a2b_base64(server_cert.encode('latin'))
+    server_cert = x509.load_pem_x509_certificate(server_cert)
+    server_cert_pubk = server_cert.public_key()
+
+    #----/ Get Root CA Certificate /----#
+    with open("../certs/Root_CA.pem", "rb") as cert_file:
+        root_cert = cert_file.read()
+        root_cert = x509.load_pem_x509_certificate(root_cert)
+
+    #----/ Chain Validation /----#
+    roots = {root_cert.issuer:root_cert}
+    chain=[]
+    valid_chain = valid_cert_chain(chain, server_cert, roots)
+
+    if not valid_chain:
+        print("Invalid certificate chain!")
+        exit()
+    
+    #----/ Send Nonce /----#
+
+
+
     print("##################################### CIPHER AGREEMENTS #####################################")
     ALGORITHMS = ['CHACHA20', 'AES']
     MODE = ['CFB', 'GCM']
@@ -222,23 +272,16 @@ def main():
 
     req = requests.get(
         f'{SERVER_URL}/api/protocols?ALGORITHMS={ALGORITHMS}&Modes={MODE}&Digests={HASH}')
+
     if req.status_code != 200:
         print("Error. Couldn't agree on protocols")
-
+        exit()
+    
     print("Request protocols: ", req.text)
     args = json.loads(req.text)
     matched_alg = args["Algorithm"]
     matched_mode = args["Mode"]
     matched_hash = args["Hash"]
-
-    print("################################# CERTIFICATE AUTHENTICATION ###############################")
-    
-    #----/ Request Server's Certificate /----#
-    eq = requests.get(f'{SERVER_URL}/api/auth')
-
-
-
-
 
     print("##################################### DIFFIE-HELLMAN #######################################")
 
@@ -306,24 +349,31 @@ def main():
         # TODO: Process chunk
 
         derived_shared_key = derive_key(str(chunk_id) + media_item["id"])
-        
+
         if matched_alg == "CHACHA20":
-            json_nonce = binascii.a2b_base64(chunk['json_nonce'].encode('latin'))
+            json_nonce = binascii.a2b_base64(
+                chunk['json_nonce'].encode('latin'))
             print(type(json_nonce))
-            encrypted = binascii.a2b_base64(chunk[binascii.b2a_base64(encryptChaCha20(shared_key, 'data', json_nonce)).decode('latin').strip()].encode('latin'))
-            iv = binascii.a2b_base64(chunk[binascii.b2a_base64(encryptChaCha20(shared_key, 'iv', json_nonce)).decode('latin').strip()].encode('latin'))
+            encrypted = binascii.a2b_base64(chunk[binascii.b2a_base64(encryptChaCha20(
+                shared_key, 'data', json_nonce)).decode('latin').strip()].encode('latin'))
+            iv = binascii.a2b_base64(chunk[binascii.b2a_base64(encryptChaCha20(
+                shared_key, 'iv', json_nonce)).decode('latin').strip()].encode('latin'))
             decrypted = binascii.a2b_base64(
                 str(decryptChaCha20(derived_shared_key, iv, encrypted), 'utf-8').encode('latin'))
 
-            recv_hmac = binascii.a2b_base64(chunk[binascii.b2a_base64(encryptChaCha20(shared_key, 'hmac', json_nonce)).decode('latin').strip()].encode('latin'))
+            recv_hmac = binascii.a2b_base64(chunk[binascii.b2a_base64(encryptChaCha20(
+                shared_key, 'hmac', json_nonce)).decode('latin').strip()].encode('latin'))
         if matched_alg == "AES":
             json_iv = binascii.a2b_base64(chunk['json_iv'].encode('latin'))
-            encrypted = binascii.a2b_base64(chunk[binascii.b2a_base64(encryptAES(shared_key, 'data', json_iv)).decode('latin').strip()].encode('latin'))
-            iv = binascii.a2b_base64(chunk[binascii.b2a_base64(encryptAES(shared_key, 'iv', json_iv)).decode('latin').strip()].encode('latin'))
+            encrypted = binascii.a2b_base64(chunk[binascii.b2a_base64(encryptAES(
+                shared_key, 'data', json_iv)).decode('latin').strip()].encode('latin'))
+            iv = binascii.a2b_base64(chunk[binascii.b2a_base64(encryptAES(
+                shared_key, 'iv', json_iv)).decode('latin').strip()].encode('latin'))
             decrypted = binascii.a2b_base64(
                 str(decryptAES(derived_shared_key, iv, encrypted), 'utf-8').encode('latin'))
 
-            recv_hmac = binascii.a2b_base64(chunk[binascii.b2a_base64(encryptAES(shared_key, 'hmac', json_iv)).decode('latin').strip()].encode('latin'))
+            recv_hmac = binascii.a2b_base64(chunk[binascii.b2a_base64(encryptAES(
+                shared_key, 'hmac', json_iv)).decode('latin').strip()].encode('latin'))
 
         h = hmac.HMAC(current_derived_key, hashes.SHA256())
         h.update(encrypted)

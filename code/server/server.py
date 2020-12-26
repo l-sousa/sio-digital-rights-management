@@ -8,6 +8,7 @@ from cryptography.hazmat.primitives.asymmetric import dh
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives import hashes, hmac
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.serialization import load_pem_private_key
 import logging
 import binascii
 import json
@@ -20,6 +21,7 @@ mode = None
 algorithm = None
 hash_mode = None
 current_derived_key = None
+cert_privk = None
 
 logger = logging.getLogger('root')
 FORMAT = "[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s"
@@ -248,17 +250,26 @@ class MediaServer(resource.Resource):
         print("Sending key to client...")
         return json.dumps({"p": p, "g": g, "y": y}, indent=4).encode('latin')
 
+    def do_authenticate(self, request):
+        global cert_privk
+        #----/ Load server certificate /----#
+        if request.args[b'opt'][0].decode('latin') == "get_cert":
+            with open("../certs/server_cert.pem", "rb") as cert_file:
+                return json.dumps({
+                    'cert': binascii.b2a_base64(cert_file.read()).decode('latin').strip()
+                    },indent=4).encode('latin')
+
+
     # Handle a GET request
     def render_GET(self, request):
         logger.debug(f'Received request for {request.uri}')
-        print(request.path)
         try:
             if request.path == b'/api/protocols':
                 return self.do_get_protocols(request)
             elif request.path == b'/api/key':
                 return self.do_get_public_key(request)
             elif request.path == b'/api/auth':
-                return self.go_get_certificate(request)
+                return self.do_authenticate(request)
             elif request.path == b'/api/list':
                 return self.do_list(request)
             elif request.path == b'/api/download':
@@ -280,7 +291,7 @@ class MediaServer(resource.Resource):
         logger.debug(f'Received POST for {request.uri}')
         request.setResponseCode(501)
         return b''
-
+    
     def build(self, p, g, y):
         """Builds the key based on it's parameters (p,g,y)"""
         print('Building key... ')
