@@ -40,7 +40,7 @@ CATALOG = {'898a08080d1840793122b7e118b27a95d117ebce':
                'album': 'Upbeat Ukulele Background Music',
                'description': 'Nicolai Heidlas Music: http://soundcloud.com/nicolai-heidlas',
                'duration': 3*60+33,
-               'file_name': '898a08080d1840793122b7e118b27a95d117ebce.mp3',
+               'file_name': 'teste.mp3',
                'file_size': 3407202
            }
            }
@@ -124,12 +124,27 @@ class MediaServer(resource.Resource):
 
         logger.debug(f'Download: chunk: {chunk_id}')
 
-        offset = chunk_id * CHUNK_SIZE
+ 
+
+        offset = chunk_id * CHUNK_SIZE + 16
 
         # Open file, seek to correct position and return the chunk
         with open(os.path.join(CATALOG_BASE, media_item['file_name']), 'rb') as f:
+            iv_mp3 = f.read(16)
             f.seek(offset)
-            data = f.read(CHUNK_SIZE)
+
+            with open("server/mp3_key.txt","rb") as f1:
+                mp3_key = f1.read()
+            data=b''
+            while len(data)!=CHUNK_SIZE:
+                data_temp = f.read(16)
+                cipher = Cipher(algorithms.AES(mp3_key), modes.OFB(iv_mp3))
+                decryptor = cipher.decryptor()
+                data+= decryptor.update(data_temp) + decryptor.finalize()
+
+            print(data)
+                
+            #data = f.read(CHUNK_SIZE)
 
             request.responseHeaders.addRawHeader(
                 b"content-type", b"application/json")
