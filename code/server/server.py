@@ -4,17 +4,19 @@ from twisted.web import server, resource
 from twisted.internet import reactor, defer
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.backends.interfaces import DHBackend
-from cryptography.hazmat.primitives.asymmetric import dh
+from cryptography.hazmat.primitives.asymmetric import dh, padding
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives import hashes, hmac
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
+from cryptography.hazmat.primitives import serialization
 import logging
 import binascii
 import json
 import os
 import math
 import ast
+from cryptography import x509
 
 shared_key = None
 mode = None
@@ -124,7 +126,7 @@ class MediaServer(resource.Resource):
         with open(os.path.join(CATALOG_BASE, media_item['file_name']), 'rb') as f:
             f.seek(offset)
             data = f.read(CHUNK_SIZE)
-          
+
             request.responseHeaders.addRawHeader(
                 b"content-type", b"application/json")
 
@@ -135,7 +137,8 @@ class MediaServer(resource.Resource):
             derived_shared_key = self.derive_key(chunk_media_id)
             print("derived_shared_key ", derived_shared_key)
 
-            encrypted_chunk, iv = self.encrypt_chunk(derived_shared_key, data, chunk_media_id)
+            encrypted_chunk, iv = self.encrypt_chunk(
+                derived_shared_key, data, chunk_media_id)
             hmac = self.generate_hmac(encrypted_chunk)
 
             if algorithm == "AES":
@@ -151,7 +154,7 @@ class MediaServer(resource.Resource):
                         'json_iv': binascii.b2a_base64(json_iv).decode('latin'),
                     }, indent=4
                 ).encode('latin')
-            
+
             if algorithm == "CHACHA20":
                 json_nonce = os.urandom(16)
                 print("json nonce <><< ", json_nonce)
@@ -227,7 +230,7 @@ class MediaServer(resource.Resource):
         hash_mode = matched_hash
 
         return json.dumps({"Algorithm": matched_alg, "Mode": matched_mode, "Hash": matched_hash}, indent=4).encode('latin')
-    
+
     def do_get_public_key(self, request):
         """Receives the client's public key and sends server public key"""
         global shared_key
@@ -254,12 +257,35 @@ class MediaServer(resource.Resource):
         global cert_privk
         #----/ Load server certificate /----#
         if request.args[b'opt'][0].decode('latin') == "get_cert":
-            with open("../certs/server_cert.pem", "rb") as cert_file:
+            with open("../certs/server_cert.crt", "rb") as cert_file:
                 return json.dumps({
                     'cert': binascii.b2a_base64(cert_file.read()).decode('latin').strip()
-                    },indent=4).encode('latin')
+                }, indent=4).encode('latin')
 
+    def sign_client_nonce(self, client_nonce):
 
+        with open("../certs/server_cert.pem", "rb") as key_file:
+            self.private_key = serialization.load_pem_private_key(key_file.read(), None, backend=default_backend())
+
+        decoded_nonce = binascii.a2b_base64(client_nonce.encode('latin'))
+        
+        print("DECODED NONCE ", type(decoded_nonce))
+        
+        signature = self.private_key.sign(
+            decoded_nonce,
+            padding.PSS(mgf=padding.MGF1(hashes.SHA256()),salt_length=padding.PSS.MAX_LENGTH),hashes.SHA256()
+        )
+        
+        with open("../certs/server_cert.crt", "rb") as cert_file:
+            server_cert = x509.load_pem_x509_certificate(cert_file.read())
+            server_cert_pubk = server_cert.public_key()
+
+        server_cert_pubk.verify(signature, decoded_nonce, padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256())
+        
+        return  json.dumps({
+            'signature': binascii.b2a_base64(signature).decode('latin')
+        }, indent=4).encode('latin')
+        
     # Handle a GET request
     def render_GET(self, request):
         logger.debug(f'Received request for {request.uri}')
@@ -289,8 +315,25 @@ class MediaServer(resource.Resource):
     # Handle a POST request
     def render_POST(self, request):
         logger.debug(f'Received POST for {request.uri}')
-        request.setResponseCode(501)
-        return b''
+
+        try:
+            if request.path == b'/api/auth':
+                client_nonce = json.loads(request.content.read())
+                client_nonce = client_nonce['nonce']
+                print("NONCE ", client_nonce)
+                return self.sign_client_nonce(client_nonce)
+                
+            else:
+                request.responseHeaders.addRawHeader(
+                    b"content-type", b'text/plain')
+                return b'Methods: /api/protocols /api/list /api/download'
+
+        except Exception as e:
+            logger.exception(e)
+            request.setResponseCode(500)
+            request.responseHeaders.addRawHeader(
+                b"content-type", b"text/plain")
+            return b''
     
     def build(self, p, g, y):
         """Builds the key based on it's parameters (p,g,y)"""
@@ -352,7 +395,7 @@ class MediaServer(resource.Resource):
         print("DATA>>>>>> ", data)
         global current_derived_key
         global algorithm
-        
+
         current_derived_key = HKDF(
             algorithm=hashes.SHA256(),
             length=32,
@@ -381,11 +424,11 @@ class MediaServer(resource.Resource):
         if mode == "OFB":
             cipher = Cipher(algorithms.AES(key), modes.OFB(iv))
         if mode == "CTR":
-            cipher = Cipher(algorithms.AES(key), modes.CTR(iv)) 
+            cipher = Cipher(algorithms.AES(key), modes.CTR(iv))
         if mode == "CFB":
             cipher = Cipher(algorithms.AES(key), modes.CFB(iv))
         if mode == "CBC":
-            cipher = Cipher(algorithms.AES(key), modes.CBC(iv)) 
+            cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
         encryptor = cipher.encryptor()
         ct = encryptor.update(bytes(msg, 'utf-8')) + encryptor.finalize()
 
@@ -402,12 +445,12 @@ class MediaServer(resource.Resource):
         if mode == "CFB":
             cipher = Cipher(algorithms.AES(key), modes.CFB(iv))
         if mode == "CBC":
-            cipher = Cipher(algorithms.AES(key), modes.CBC(iv)) 
+            cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
         decryptor = cipher.decryptor()
         return decryptor.update(msg) + decryptor.finalize()
 
     def generate_hmac(self, encrypted_cunk):
-        global current_derived_key 
+        global current_derived_key
         h = hmac.HMAC(current_derived_key, hashes.SHA256())
         h.update(encrypted_cunk)
         return h.finalize()
@@ -433,7 +476,7 @@ class MediaServer(resource.Resource):
 
         return ct, nonce
 
-    
+
 print("Server started")
 print("URL is: http://IP:8080")
 

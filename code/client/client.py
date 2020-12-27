@@ -1,5 +1,5 @@
 from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives.asymmetric import dh
+from cryptography.hazmat.primitives.asymmetric import dh, padding
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -14,6 +14,7 @@ import subprocess
 import time
 import sys
 import datetime
+from cryptography.exceptions import InvalidSignature
 
 logger = logging.getLogger('root')
 FORMAT = "[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s"
@@ -205,20 +206,22 @@ def derive_key(data=None):
 
     return current_derived_key
 
+
 def valid_cert_chain(chain, cert, roots):
-        chain.append(cert)
-        issuer = cert.issuer
-        subject = cert.subject
+    chain.append(cert)
+    issuer = cert.issuer
+    subject = cert.subject
 
-        # Quando chegar à root (em self-signed certificates o issuer é igual ao subject)
-        if issuer == subject and subject in roots:
-            return True
+    # Quando chegar à root (em self-signed certificates o issuer é igual ao subject)
+    if issuer == subject and subject in roots:
+        return True
 
-        if issuer in roots:
-            return valid_cert_chain(chain, roots[issuer], roots)
+    if issuer in roots:
+        return valid_cert_chain(chain, roots[issuer], roots)
 
-        print("Invalid Chain!")
-        return False
+    print("Invalid Chain!")
+    return False
+
 
 def main():
     global shared_key
@@ -232,39 +235,6 @@ def main():
     # Get a list of media files
     print("Contacting Server")
 
-    print("################################# CERTIFICATE AUTHENTICATION ###############################")
-
-    #----/ Request Server's Certificate /----#
-    req = requests.get(f'{SERVER_URL}/api/auth?opt={"get_cert"}')
-
-    if req.status_code != 200:
-        print("Error. Couldn't receive server certificate")
-        exit()
-
-    server_cert = req.json()
-    server_cert = server_cert['cert']
-    server_cert = binascii.a2b_base64(server_cert.encode('latin'))
-    server_cert = x509.load_pem_x509_certificate(server_cert)
-    server_cert_pubk = server_cert.public_key()
-
-    #----/ Get Root CA Certificate /----#
-    with open("../certs/Root_CA.pem", "rb") as cert_file:
-        root_cert = cert_file.read()
-        root_cert = x509.load_pem_x509_certificate(root_cert)
-
-    #----/ Chain Validation /----#
-    roots = {root_cert.issuer:root_cert}
-    chain=[]
-    valid_chain = valid_cert_chain(chain, server_cert, roots)
-
-    if not valid_chain:
-        print("Invalid certificate chain!")
-        exit()
-    
-    #----/ Send Nonce /----#
-
-
-
     print("##################################### CIPHER AGREEMENTS #####################################")
     ALGORITHMS = ['CHACHA20', 'AES']
     MODE = ['CFB', 'GCM']
@@ -276,7 +246,7 @@ def main():
     if req.status_code != 200:
         print("Error. Couldn't agree on protocols")
         exit()
-    
+
     print("Request protocols: ", req.text)
     args = json.loads(req.text)
     matched_alg = args["Algorithm"]
@@ -299,6 +269,68 @@ def main():
     #----/ Perform key exchange and derivation /----#
     shared_key = exchange_keys(privk, server_pubk)
 
+    print("################################# CERTIFICATE AUTHENTICATION ###############################")
+
+    #----/ Request Server's Certificate /----#
+    req = requests.get(f'{SERVER_URL}/api/auth?opt={"get_cert"}')
+
+    if req.status_code != 200:
+        print("Error. Couldn't receive server certificate")
+        exit()
+
+    server_cert = req.json()
+    server_cert = server_cert['cert']
+    server_cert = binascii.a2b_base64(server_cert.encode('latin'))
+    server_cert = x509.load_pem_x509_certificate(server_cert)
+
+    #----/ Get Root CA Certificate /----#
+    with open("../certs/Root_CA.pem", "rb") as cert_file:
+        root_cert = cert_file.read()
+        root_cert = x509.load_pem_x509_certificate(root_cert)
+
+    #----/ Chain Validation /----#
+    roots = {root_cert.issuer: root_cert}
+    chain = []
+    valid_chain = valid_cert_chain(chain, server_cert, roots)
+
+    if not valid_chain:
+        print("Invalid certificate chain!")
+        exit()
+
+    #----/ Send Nonce /----#
+    nonce = os.urandom(32)
+    encoded_nonce = binascii.b2a_base64(nonce).decode('latin')
+    print("NONCE ", type(nonce))
+
+    # Tentativa de post NÃO APAGAR
+    # req = requests.post(f'{SERVER_URL}/api/auth?opt={"nonce"}', {'nonce': nonce})
+
+    req = requests.post(f'{SERVER_URL}/api/auth', data=json.dumps({'nonce':encoded_nonce}))
+
+    print(req.status_code)
+    
+    if req.status_code != 200:
+        print("Error. Couldn't receive server nonce signature")
+        exit()
+
+    print("req ", req.text)
+
+
+    #----/ Validate signature /----#
+    server_signature = json.loads(req.text)
+    server_signature = server_signature['signature']
+    server_signature = binascii.a2b_base64(server_signature.encode('latin'))
+
+    server_cert_pubk = server_cert.public_key()
+
+    print(server_signature)
+    
+    try:
+        server_cert_pubk.verify(server_signature, nonce, padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256())
+        
+    except InvalidSignature:
+        print("Error. Invalid server signature!")
+        exit()
     print("##################################### CHUNK PROCESSING #####################################")
 
     req = requests.get(f'{SERVER_URL}/api/list')
