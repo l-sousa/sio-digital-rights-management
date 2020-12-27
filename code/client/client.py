@@ -5,6 +5,8 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import hmac
 from cryptography import x509
+from cryptography.hazmat.primitives.serialization import load_pem_private_key
+from cryptography.hazmat.primitives import serialization
 import requests
 import logging
 import binascii
@@ -223,6 +225,30 @@ def valid_cert_chain(chain, cert, roots):
     return False
 
 
+def sign_client_nonce(client_nonce):
+    with open("certs/client_pk.pem", "rb") as key_file:
+        private_key = serialization.load_pem_private_key(
+            key_file.read(), None, backend=default_backend())
+
+    decoded_nonce = binascii.a2b_base64(client_nonce.encode('latin'))
+
+    signature = private_key.sign(
+        decoded_nonce,
+        padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
+                    salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256()
+    )
+
+    # with open("certs/client.crt", "rb") as cert_file:
+    #         server_cert = x509.load_pem_x509_certificate(cert_file.read())
+    #         server_cert_pubk = server_cert.public_key()
+
+    # server_cert_pubk.verify(signature, decoded_nonce, padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256())
+
+    return json.dumps({
+        'signature': binascii.b2a_base64(signature).decode('latin')
+    }, indent=4).encode('latin')
+
+
 def main():
     global shared_key
     global matched_mode
@@ -271,7 +297,7 @@ def main():
 
     print("################################# CERTIFICATE AUTHENTICATION ###############################")
 
-    #----/ Request Server's Certificate /----#
+    #----/ Server Authentication/----#
     req = requests.get(f'{SERVER_URL}/api/auth?opt={"get_cert"}')
 
     if req.status_code != 200:
@@ -301,20 +327,15 @@ def main():
     nonce = os.urandom(32)
     encoded_nonce = binascii.b2a_base64(nonce).decode('latin')
 
-
     # Tentativa de post NÃO APAGAR
     # req = requests.post(f'{SERVER_URL}/api/auth?opt={"nonce"}', {'nonce': nonce})
 
-    req = requests.post(f'{SERVER_URL}/api/auth', data=json.dumps({'nonce':encoded_nonce}))
+    req = requests.post(f'{SERVER_URL}/api/auth',
+                        data=json.dumps({'nonce': encoded_nonce}))
 
-    print(req.status_code)
-    
     if req.status_code != 200:
         print("Error. Couldn't receive server nonce signature")
         exit()
-
-    print("req ", req.text)
-
 
     #----/ Validate signature /----#
     server_signature = json.loads(req.text)
@@ -322,17 +343,36 @@ def main():
     server_signature = binascii.a2b_base64(server_signature.encode('latin'))
 
     server_cert_pubk = server_cert.public_key()
-    
 
-    print("NONCE ", nonce)
-    print("SIGNATURE ", server_signature)
-    print("PUBK  ", server_cert_pubk)
     try:
-        server_cert_pubk.verify(server_signature, nonce, padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256())
-        
+        server_cert_pubk.verify(server_signature, nonce, padding.PSS(mgf=padding.MGF1(
+            hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256())
+
     except InvalidSignature:
         print("Error. Invalid server signature!")
         exit()
+
+    #----/ Client Authentication /----#
+
+    with open("certs/client_cert.crt", "rb") as cert_file:
+        cert = json.dumps({
+            'cert': binascii.b2a_base64(cert_file.read()).decode('latin').strip()
+        }, indent=4).encode('latin')
+
+    req = requests.post(f'{SERVER_URL}/api/client_cert',
+                        data=cert)
+
+    server_nonce = json.loads(req.text)
+    server_nonce = server_nonce['nonce']
+    signature = sign_client_nonce(server_nonce)
+
+    req = requests.post(f'{SERVER_URL}/api/validate_signature',
+                        data=signature)
+
+    if req.status_code != 200:
+        print("Error. Invalid signature")
+        exit()
+
     print("##################################### CHUNK PROCESSING #####################################")
 
     req = requests.get(f'{SERVER_URL}/api/list')
@@ -392,8 +432,8 @@ def main():
                 shared_key, 'data', json_nonce)).decode('latin').strip()].encode('latin'))
             iv = binascii.a2b_base64(chunk[binascii.b2a_base64(encryptChaCha20(
                 shared_key, 'iv', json_nonce)).decode('latin').strip()].encode('latin'))
-            decrypted = binascii.a2b_base64(
-                str(decryptChaCha20(derived_shared_key, iv, encrypted), 'utf-8').encode('latin'))
+            decrypted = binascii.a2b_base64(str(decryptChaCha20(
+                derived_shared_key, iv, encrypted), 'utf-8').encode('latin'))
 
             recv_hmac = binascii.a2b_base64(chunk[binascii.b2a_base64(encryptChaCha20(
                 shared_key, 'hmac', json_nonce)).decode('latin').strip()].encode('latin'))

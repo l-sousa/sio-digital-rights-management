@@ -17,6 +17,8 @@ import os
 import math
 import ast
 from cryptography import x509
+from cryptography.exceptions import InvalidSignature
+
 
 shared_key = None
 mode = None
@@ -24,6 +26,8 @@ algorithm = None
 hash_mode = None
 current_derived_key = None
 cert_privk = None
+client_cert = None
+auth_nonce = None
 
 logger = logging.getLogger('root')
 FORMAT = "[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s"
@@ -264,17 +268,16 @@ class MediaServer(resource.Resource):
 
     def sign_client_nonce(self, client_nonce):
         with open("certs/server_pk.pem", "rb") as key_file:
-            self.private_key = serialization.load_pem_private_key(key_file.read(), None, backend=default_backend())
+            private_key = serialization.load_pem_private_key(
+                key_file.read(), None, backend=default_backend())
 
         decoded_nonce = binascii.a2b_base64(client_nonce.encode('latin'))
-        
 
-        
-        signature = self.private_key.sign(
+        signature = private_key.sign(
             decoded_nonce,
-            padding.PSS(mgf=padding.MGF1(hashes.SHA256()),salt_length=padding.PSS.MAX_LENGTH),hashes.SHA256()
+            padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
+                        salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256()
         )
-        
 
         # with open("../certs/server_cert.crt", "rb") as cert_file:
         #     server_cert = x509.load_pem_x509_certificate(cert_file.read())
@@ -282,12 +285,27 @@ class MediaServer(resource.Resource):
 
         # #server_cert_pubk.verify(signature, decoded_nonce, padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256())
 
-
-        return  json.dumps({
+        return json.dumps({
             'signature': binascii.b2a_base64(signature).decode('latin')
         }, indent=4).encode('latin')
-        
+
+    def valid_cert_chain(self, chain, cert, roots):
+        chain.append(cert)
+        issuer = cert.issuer
+        subject = cert.subject
+
+        # Quando chegar à root (em self-signed certificates o issuer é igual ao subject)
+        if issuer == subject and subject in roots:
+            return True
+
+        if issuer in roots:
+            return self.valid_cert_chain(chain, roots[issuer], roots)
+
+        print("Invalid Chain!")
+        return False
+
     # Handle a GET request
+
     def render_GET(self, request):
         logger.debug(f'Received request for {request.uri}')
         try:
@@ -318,12 +336,58 @@ class MediaServer(resource.Resource):
         logger.debug(f'Received POST for {request.uri}')
 
         try:
+            global client_cert
+            global auth_nonce
             if request.path == b'/api/auth':
                 client_nonce = json.loads(request.content.read())
                 client_nonce = client_nonce['nonce']
-                print("NONCE ", client_nonce)
                 return self.sign_client_nonce(client_nonce)
-                
+
+            if request.path == b'/api/client_cert':
+                client_cert = json.loads(request.content.read())
+                client_cert = client_cert['cert']
+                client_cert = binascii.a2b_base64(client_cert.encode('latin'))
+                client_cert = x509.load_pem_x509_certificate(client_cert)
+                chain = []
+
+                #----/ Get Root CA Certificate /----#
+                with open("certs/Root_CA.pem", "rb") as cert_file:
+                    root_cert = cert_file.read()
+                    root_cert = x509.load_pem_x509_certificate(root_cert)
+
+                roots = {root_cert.issuer: root_cert}
+
+                validate_cert = self.valid_cert_chain(
+                    chain, client_cert, roots)
+
+                if not validate_cert:
+                    print("Error. Certificate chain not valid!")
+                    exit()
+
+                #----/ Send Nonce /----#
+                nonce = os.urandom(32)
+                auth_nonce = nonce
+                nonce = binascii.b2a_base64(nonce).decode('latin')
+                return json.dumps({'nonce': nonce}, indent=4).encode('latin')
+
+            if request.path == b'/api/validate_signature':
+                #----/ Validate signature /----#
+                signature = json.loads(request.content.read())
+                signature = signature['signature']
+                signature = binascii.a2b_base64(signature.encode('latin'))
+
+                client_cert_pubk = client_cert.public_key()
+
+                try:
+                    client_cert_pubk.verify(signature, auth_nonce, padding.PSS(mgf=padding.MGF1(
+                        hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256())
+                    request.setResponseCode(200)
+                    return b''
+
+                except InvalidSignature:
+                    print("Error. Invalid server signature!")
+                    exit()
+
             else:
                 request.responseHeaders.addRawHeader(
                     b"content-type", b'text/plain')
@@ -335,7 +399,7 @@ class MediaServer(resource.Resource):
             request.responseHeaders.addRawHeader(
                 b"content-type", b"text/plain")
             return b''
-    
+
     def build(self, p, g, y):
         """Builds the key based on it's parameters (p,g,y)"""
         print('Building key... ')
