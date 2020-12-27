@@ -257,31 +257,32 @@ class MediaServer(resource.Resource):
         global cert_privk
         #----/ Load server certificate /----#
         if request.args[b'opt'][0].decode('latin') == "get_cert":
-            with open("../certs/server_cert.crt", "rb") as cert_file:
+            with open("certs/server_cert.crt", "rb") as cert_file:
                 return json.dumps({
                     'cert': binascii.b2a_base64(cert_file.read()).decode('latin').strip()
                 }, indent=4).encode('latin')
 
     def sign_client_nonce(self, client_nonce):
-
-        with open("../certs/server_cert.pem", "rb") as key_file:
+        with open("certs/server_pk.pem", "rb") as key_file:
             self.private_key = serialization.load_pem_private_key(key_file.read(), None, backend=default_backend())
 
         decoded_nonce = binascii.a2b_base64(client_nonce.encode('latin'))
         
-        print("DECODED NONCE ", type(decoded_nonce))
+
         
         signature = self.private_key.sign(
             decoded_nonce,
             padding.PSS(mgf=padding.MGF1(hashes.SHA256()),salt_length=padding.PSS.MAX_LENGTH),hashes.SHA256()
         )
         
-        with open("../certs/server_cert.crt", "rb") as cert_file:
-            server_cert = x509.load_pem_x509_certificate(cert_file.read())
-            server_cert_pubk = server_cert.public_key()
 
-        server_cert_pubk.verify(signature, decoded_nonce, padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256())
-        
+        # with open("../certs/server_cert.crt", "rb") as cert_file:
+        #     server_cert = x509.load_pem_x509_certificate(cert_file.read())
+        #     server_cert_pubk = server_cert.public_key()
+
+        # #server_cert_pubk.verify(signature, decoded_nonce, padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256())
+
+
         return  json.dumps({
             'signature': binascii.b2a_base64(signature).decode('latin')
         }, indent=4).encode('latin')

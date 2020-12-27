@@ -284,7 +284,7 @@ def main():
     server_cert = x509.load_pem_x509_certificate(server_cert)
 
     #----/ Get Root CA Certificate /----#
-    with open("../certs/Root_CA.pem", "rb") as cert_file:
+    with open("certs/Root_CA.pem", "rb") as cert_file:
         root_cert = cert_file.read()
         root_cert = x509.load_pem_x509_certificate(root_cert)
 
@@ -300,7 +300,7 @@ def main():
     #----/ Send Nonce /----#
     nonce = os.urandom(32)
     encoded_nonce = binascii.b2a_base64(nonce).decode('latin')
-    print("NONCE ", type(nonce))
+
 
     # Tentativa de post NÃO APAGAR
     # req = requests.post(f'{SERVER_URL}/api/auth?opt={"nonce"}', {'nonce': nonce})
@@ -322,9 +322,11 @@ def main():
     server_signature = binascii.a2b_base64(server_signature.encode('latin'))
 
     server_cert_pubk = server_cert.public_key()
-
-    print(server_signature)
     
+
+    print("NONCE ", nonce)
+    print("SIGNATURE ", server_signature)
+    print("PUBK  ", server_cert_pubk)
     try:
         server_cert_pubk.verify(server_signature, nonce, padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256())
         
