@@ -11,6 +11,10 @@ from cryptography.hazmat.primitives import hashes, hmac
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 from cryptography.hazmat.primitives import serialization
+from cryptography.x509.oid import NameOID
+from cryptography.hazmat.primitives.serialization import Encoding
+from datetime import datetime
+import datetime
 import logging
 import binascii
 import json
@@ -129,6 +133,18 @@ class MediaServer(resource.Resource):
 
         offset = chunk_id * CHUNK_SIZE + 16
 
+        #Verify if the client still has a valid license
+        with open("certs/Client_licence.pem","rb") as f:
+            pem_data = f.read()
+            f.close()
+
+        cli_license = x509.load_pem_x509_certificate(pem_data, default_backend())
+
+        license_val = cli_license.not_valid_after
+        now_date = datetime.datetime.now()
+        if now_date > license_val:
+            request.setResponseCode(300)
+            return b''
         # Open file, seek to correct position and return the chunk
         with open(os.path.join(CATALOG_BASE, media_item['file_name']), 'rb') as f:
             iv_mp3 = f.read(16)
@@ -197,8 +213,7 @@ class MediaServer(resource.Resource):
                 )
             else:
                 raise TypeError
-            print("sig " ,signature)
-            print("ret " ,type(ret))
+
             return signature+ret
 
         # File was not open?
@@ -260,6 +275,52 @@ class MediaServer(resource.Resource):
         hash_mode = matched_hash
 
         return json.dumps({"Algorithm": matched_alg, "Mode": matched_mode, "Hash": matched_hash}, indent=4).encode('latin')
+
+    def do_get_licence(self,request):
+        #get privk
+        with open("certs/server_pk.pem", "rb") as key_file:
+            private_key = serialization.load_pem_private_key(
+                key_file.read(), None, backend=default_backend())
+        #get pubk
+        with open("certs/server_cert.crt", "rb") as cert_file:
+            server_cert = x509.load_pem_x509_certificate(cert_file.read())
+            server_cert_pubk = server_cert.public_key()
+
+
+
+        subject = issuer = x509.Name([
+            x509.NameAttribute(NameOID.COUNTRY_NAME, u"PT"),
+            x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, u"AVEIRO"),
+            x509.NameAttribute(NameOID.LOCALITY_NAME, u"AVEIRO"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, u"SIO"),
+            x509.NameAttribute(NameOID.COMMON_NAME, u"Client_licence"),
+        ])
+        cert = x509.CertificateBuilder().subject_name(
+            subject
+        ).issuer_name(
+            issuer
+        ).public_key(
+            server_cert_pubk
+        ).serial_number(
+            x509.random_serial_number()
+        ).not_valid_before(
+            datetime.datetime.utcnow()
+        ).not_valid_after(
+            # Our certificate will be valid for 10 minutes
+            datetime.datetime.utcnow() + datetime.timedelta(minutes=1)
+        ).add_extension(
+            x509.SubjectAlternativeName([x509.DNSName(u"localhost")]),
+            critical=False,
+        # Sign our certificate with our private key
+        ).sign(private_key, hashes.SHA256())
+        # Write our certificate out to disk.
+        with open("certs/Client_licence.pem", "wb") as f:
+            f.write(cert.public_bytes(serialization.Encoding.PEM))
+        client_cert_bytes = cert.public_bytes(Encoding.DER)
+        return json.dumps({'certificate': binascii.b2a_base64(client_cert_bytes).decode('latin').strip()},indent=4).encode('latin')
+ 
+
+
 
     def do_get_public_key(self, request):
         """Receives the client's public key and sends server public key"""
@@ -345,6 +406,9 @@ class MediaServer(resource.Resource):
                 return self.do_list(request)
             elif request.path == b'/api/download':
                 return self.do_download(request)
+            elif request.path == b'/api/licence':
+                print(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>><")
+                return self.do_get_licence(request)
             else:
                 request.responseHeaders.addRawHeader(
                     b"content-type", b'text/plain')
@@ -388,7 +452,7 @@ class MediaServer(resource.Resource):
 
                 if not validate_cert:
                     print("Error. Certificate chain not valid!")
-                    exit()
+                    
 
                 #----/ Send Nonce /----#
                 nonce = os.urandom(32)
@@ -412,7 +476,7 @@ class MediaServer(resource.Resource):
 
                 except InvalidSignature:
                     print("Error. Invalid server signature!")
-                    exit()
+                    
 
             else:
                 request.responseHeaders.addRawHeader(

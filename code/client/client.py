@@ -30,6 +30,7 @@ matched_mode = None
 matched_alg = None
 matched_hash = None
 current_derived_key = None
+licence = None
 
 
 def public_key_compose(p, g, y):
@@ -254,6 +255,7 @@ def main():
     global matched_mode
     global matched_alg
     global matched_hash
+    global licence
     print("|--------------------------------------|")
     print("|         SECURE MEDIA CLIENT          |")
     print("|--------------------------------------|\n")
@@ -278,6 +280,12 @@ def main():
     matched_alg = args["Algorithm"]
     matched_mode = args["Mode"]
     matched_hash = args["Hash"]
+    print("###################################### LICENCE ##############################################")
+    req = requests.get(f'{SERVER_URL}/api/licence')
+    resp = req.json()
+    client_cert_bytes = binascii.a2b_base64(resp["certificate"].encode('latin'))
+    licence = x509.load_der_x509_certificate(client_cert_bytes, backend=default_backend())
+    print(">>Licence " , licence)
 
     print("##################################### DIFFIE-HELLMAN #######################################")
 
@@ -420,6 +428,10 @@ def main():
 
         req = requests.get(
             f'{SERVER_URL}/api/download?id={media_item["id"]}&chunk={chunk}')
+
+        if req.status_code == 300:
+            print("Not valid license!")
+            exit()        
 
         chunk = json.loads(req.content[256:])
 
