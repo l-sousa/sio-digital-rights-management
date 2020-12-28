@@ -379,6 +379,7 @@ def main():
     if req.status_code == 200:
         print("Got Server List")
 
+
     media_list = req.json()
 
     # Present a simple selection menu
@@ -416,9 +417,29 @@ def main():
     # Get data from server and send it to the ffplay stdin through a pipe
     for chunk in range(media_item['chunks'] + 1):
         chunk_id = chunk
+
         req = requests.get(
             f'{SERVER_URL}/api/download?id={media_item["id"]}&chunk={chunk}')
-        chunk = req.json()
+
+        chunk = json.loads(req.content[256:])
+
+        #Server signature
+        signature = req.content[0:256]
+
+        #Verify if is really is the server signature
+
+        if server_cert_pubk.verify(
+            signature,
+            req.content[256:],
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=padding.PSS.MAX_LENGTH
+            ),
+            hashes.SHA256()
+        ) is not None:
+            exit(1)
+
+
 
         # TODO: Process chunk
 

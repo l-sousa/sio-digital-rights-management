@@ -5,6 +5,7 @@ from twisted.internet import reactor, defer
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.backends.interfaces import DHBackend
 from cryptography.hazmat.primitives.asymmetric import dh, padding
+from cryptography.hazmat.primitives.asymmetric import dsa, rsa
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives import hashes, hmac
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -142,10 +143,6 @@ class MediaServer(resource.Resource):
                 decryptor = cipher.decryptor()
                 data+= decryptor.update(data_temp) + decryptor.finalize()
 
-            print(data)
-                
-            #data = f.read(CHUNK_SIZE)
-
             request.responseHeaders.addRawHeader(
                 b"content-type", b"application/json")
 
@@ -188,7 +185,21 @@ class MediaServer(resource.Resource):
                     }, indent=4
                 ).encode('latin')
 
-            return ret
+            with open("certs/server_pk.pem", "rb") as key_file:
+                private_key = serialization.load_pem_private_key(
+                    key_file.read(), None, backend=default_backend())
+
+            if isinstance(private_key, rsa.RSAPrivateKey):
+                signature = private_key.sign(
+                    ret,
+                    padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
+                                salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256()
+                )
+            else:
+                raise TypeError
+            print("sig " ,signature)
+            print("ret " ,type(ret))
+            return signature+ret
 
         # File was not open?
         request.responseHeaders.addRawHeader(
