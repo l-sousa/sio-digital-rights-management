@@ -6,11 +6,11 @@ import os
 pk = os.urandom(32)
 iv = os.urandom(16)
 
-with open("mp3_key.txt","wb+") as file:
+with open("server/mp3_key.txt","wb+") as file:
     file.write(pk)
     file.close()
 
-with open("teste.mp3","wb+") as file:
+with open("server/catalog/teste.mp3","wb+") as file:
     file.write(iv)
     file.close()
 
@@ -32,7 +32,7 @@ with open("server/catalog/898a08080d1840793122b7e118b27a95d117ebce.mp3","rb") as
 
         ct = encryptor.update(data) + encryptor.finalize()
 
-        with open("teste.mp3","ab+") as f2:
+        with open("server/catalog/teste.mp3","ab+") as f2:
             f2.write(ct)
             f2.close()
 f1.close()
