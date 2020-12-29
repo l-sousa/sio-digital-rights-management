@@ -269,7 +269,7 @@ def main():
     print("##################################### CIPHER AGREEMENTS #####################################")
     ALGORITHMS = ['CHACHA20', 'AES']
     MODE = ['CFB', 'OFB', 'CTR']
-    HASH = ['SHA-512', 'MD5', 'BLAKE2b']
+    HASH = ['SHA-256','SHA-512', 'MD5']
 
     req = requests.get(
         f'{SERVER_URL}/api/protocols?ALGORITHMS={ALGORITHMS}&Modes={MODE}&Digests={HASH}')
@@ -287,6 +287,8 @@ def main():
         matched_hash = hashes.SHA256()
     if hash_agree == "SHA-512":
         matched_hash = hashes.SHA512()
+    if hash_agree == "MD5":
+        matched_hash = hashes.MD5()
     
     print("###################################### LICENCE ##############################################")
     req = requests.get(f'{SERVER_URL}/api/licence')

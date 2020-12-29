@@ -229,7 +229,7 @@ class MediaServer(resource.Resource):
 
         ALGORITHMS = ['CHACHA20', 'AES']
         MODE = ['CFB', 'OFB', 'CTR']
-        HASH = ['SHA-512','SHA-256',  'MD5', 'BLAKE2b']
+        HASH = ['SHA-512','SHA-256','MD5']
 
         cli_alg = request.args[b'ALGORITHMS']
         cli_alg_d = cli_alg[0].decode('latin')
@@ -277,6 +277,8 @@ class MediaServer(resource.Resource):
             hash_mode = hashes.SHA256()
         elif matched_hash == "SHA-512":
             hash_mode = hashes.SHA512()
+        elif matched_hash == "MD5":
+            hash_mode = hashes.MD5()
 
         return json.dumps({"Algorithm": matched_alg, "Mode": matched_mode, "Hash": matched_hash}, indent=4).encode('latin')
 
