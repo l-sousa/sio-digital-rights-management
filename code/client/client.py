@@ -113,19 +113,29 @@ def get_server_public_key(parameters):
 
 
 def exchange_keys(privk, server_pubk):
+    global matched_hash
     """Perform key exchange and key derivation"""
     #----/ Exchange keys /----#
     print("Creating shared key...")
     shared_key = privk.exchange(server_pubk)
 
     #----/ Key Derivation /----#
-    derived = HKDF(
-        algorithm=hashes.SHA256(),
-        length=32,
-        salt=None,
-        info=b'handshake data',
-        backend=default_backend()
-    ).derive(shared_key)
+    if matched_hash == "SHA-256":
+        derived = HKDF(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=None,
+            info=b'handshake data',
+            backend=default_backend()
+        ).derive(shared_key)
+    elif matched_hash == "SHA-512":
+        derived = HKDF(
+            algorithm=hashes.SHA512(),
+            length=32,
+            salt=None,
+            info=b'handshake data',
+            backend=default_backend()
+        ).derive(shared_key)
 
     print("Derived key ", derived)
     return derived
@@ -198,14 +208,24 @@ def derive_key(data=None):
     global shared_key
     global current_derived_key
     global matched_alg
+    global macthed_hash
 
-    current_derived_key = HKDF(
-        algorithm=hashes.SHA256(),
-        length=32,
-        salt=None,
-        info=b'handshake data' if not data else bytes(str(data), 'utf-8'),
-        backend=default_backend()
-    ).derive(shared_key)
+    if matched_hash == "SHA-256":
+        current_derived_key = HKDF(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=None,
+            info=b'handshake data' if not data else bytes(str(data), 'utf-8'),
+            backend=default_backend()
+        ).derive(shared_key)
+    elif macthed_hash == "SHA-512":
+        current_derived_key = HKDF(
+            algorithm=hashes.SHA512(),
+            length=32,
+            salt=None,
+            info=b'handshake data' if not data else bytes(str(data), 'utf-8'),
+            backend=default_backend()
+        ).derive(shared_key)
 
     return current_derived_key
 
@@ -227,17 +247,25 @@ def valid_cert_chain(chain, cert, roots):
 
 
 def sign_client_nonce(client_nonce):
+    global matched_hash
     with open("certs/client_pk.pem", "rb") as key_file:
         private_key = serialization.load_pem_private_key(
             key_file.read(), None, backend=default_backend())
 
     decoded_nonce = binascii.a2b_base64(client_nonce.encode('latin'))
 
-    signature = private_key.sign(
-        decoded_nonce,
-        padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
-                    salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256()
-    )
+    if matched_hash == "SHA-256":
+        signature = private_key.sign(
+            decoded_nonce,
+            padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
+                        salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256()
+        )
+    elif matched_hash == "SHA-512":
+        signature = private_key.sign(
+            decoded_nonce,
+            padding.PSS(mgf=padding.MGF1(hashes.SHA512()),
+                        salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256()
+        )
 
     # with open("certs/client.crt", "rb") as cert_file:
     #         server_cert = x509.load_pem_x509_certificate(cert_file.read())
@@ -265,7 +293,7 @@ def main():
 
     print("##################################### CIPHER AGREEMENTS #####################################")
     ALGORITHMS = ['CHACHA20', 'AES']
-    MODE = ['CFB', 'GCM']
+    MODE = ['CFB', 'OFB', 'CTR']
     HASH = ['SHA-256', 'SHA-512', 'MD5', 'BLAKE2b']
 
     req = requests.get(
@@ -353,9 +381,12 @@ def main():
     server_cert_pubk = server_cert.public_key()
 
     try:
-        server_cert_pubk.verify(server_signature, nonce, padding.PSS(mgf=padding.MGF1(
-            hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256())
-
+        if matched_hash == "SHA-256":
+            server_cert_pubk.verify(server_signature, nonce, padding.PSS(mgf=padding.MGF1(
+                hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256())
+        elif matched_hash == "SHA-512":
+            server_cert_pubk.verify(server_signature, nonce, padding.PSS(mgf=padding.MGF1(
+                hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH), hashes.SHA512())
     except InvalidSignature:
         print("Error. Invalid server signature!")
         exit()
@@ -439,17 +470,28 @@ def main():
         signature = req.content[0:256]
 
         #Verify if is really is the server signature
-
-        if server_cert_pubk.verify(
-            signature,
-            req.content[256:],
-            padding.PSS(
-                mgf=padding.MGF1(hashes.SHA256()),
-                salt_length=padding.PSS.MAX_LENGTH
-            ),
-            hashes.SHA256()
-        ) is not None:
-            exit(1)
+        if matched_hash == "SHA-256":
+            if server_cert_pubk.verify(
+                signature,
+                req.content[256:],
+                padding.PSS(
+                    mgf=padding.MGF1(hashes.SHA256()),
+                    salt_length=padding.PSS.MAX_LENGTH
+                ),
+                hashes.SHA256()
+            ) is not None:
+                exit(1)
+        if matched_hash == "SHA-512":
+            if server_cert_pubk.verify(
+                signature,
+                req.content[256:],
+                padding.PSS(
+                    mgf=padding.MGF1(hashes.SHA512()),
+                    salt_length=padding.PSS.MAX_LENGTH
+                ),
+                hashes.SHA512()
+            ) is not None:
+                exit(1)
 
 
 

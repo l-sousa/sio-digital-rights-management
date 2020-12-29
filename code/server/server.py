@@ -45,7 +45,7 @@ CATALOG = {'898a08080d1840793122b7e118b27a95d117ebce':
                'album': 'Upbeat Ukulele Background Music',
                'description': 'Nicolai Heidlas Music: http://soundcloud.com/nicolai-heidlas',
                'duration': 3*60+33,
-               'file_name': 'teste.mp3',
+               'file_name': '898a08080d1840793122b7e118b27a95d117ebce.mp3',
                'file_size': 3407202
            }
            }
@@ -86,6 +86,7 @@ class MediaServer(resource.Resource):
     def do_download(self, request):
         global algorithm
         global shared_key
+        global hash_mode
         logger.debug(f'Download: args: {request.args}')
 
         media_id = request.args.get(b'id', [None])[0]
@@ -150,7 +151,7 @@ class MediaServer(resource.Resource):
             iv_mp3 = f.read(16)
             f.seek(offset)
 
-            with open("server/mp3_key.txt","rb") as f1:
+            with open("certs/mp3_key.txt","rb") as f1:
                 mp3_key = f1.read()
             data=b''
             while len(data)!=CHUNK_SIZE:
@@ -206,11 +207,18 @@ class MediaServer(resource.Resource):
                     key_file.read(), None, backend=default_backend())
 
             if isinstance(private_key, rsa.RSAPrivateKey):
-                signature = private_key.sign(
-                    ret,
-                    padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
-                                salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256()
-                )
+                if hash_mode == "SHA-256":
+                    signature = private_key.sign(
+                        ret,
+                        padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
+                                    salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256()
+                    )
+                elif hash_mode == "SHA-512":
+                    signature = private_key.sign(
+                        ret,
+                        padding.PSS(mgf=padding.MGF1(hashes.SHA512()),
+                                    salt_length=padding.PSS.MAX_LENGTH), hashes.SHA512()
+                    )
             else:
                 raise TypeError
 
@@ -226,8 +234,8 @@ class MediaServer(resource.Resource):
         global algorithm
         global hash_mode
 
-        ALGORITHMS = ['CHACHA20']
-        MODE = ['CFB']
+        ALGORITHMS = ['CHACHA20', 'AES']
+        MODE = ['CFB', 'OFB', 'CTR']
         HASH = ['SHA-256', 'SHA-512', 'MD5', 'BLAKE2b']
 
         cli_alg = request.args[b'ALGORITHMS']
@@ -277,6 +285,7 @@ class MediaServer(resource.Resource):
         return json.dumps({"Algorithm": matched_alg, "Mode": matched_mode, "Hash": matched_hash}, indent=4).encode('latin')
 
     def do_get_licence(self,request):
+        global hash_mode
         #get privk
         with open("certs/server_pk.pem", "rb") as key_file:
             private_key = serialization.load_pem_private_key(
@@ -295,24 +304,45 @@ class MediaServer(resource.Resource):
             x509.NameAttribute(NameOID.ORGANIZATION_NAME, u"SIO"),
             x509.NameAttribute(NameOID.COMMON_NAME, u"Client_licence"),
         ])
-        cert = x509.CertificateBuilder().subject_name(
-            subject
-        ).issuer_name(
-            issuer
-        ).public_key(
-            server_cert_pubk
-        ).serial_number(
-            x509.random_serial_number()
-        ).not_valid_before(
-            datetime.datetime.utcnow()
-        ).not_valid_after(
-            # Our certificate will be valid for 10 minutes
-            datetime.datetime.utcnow() + datetime.timedelta(minutes=1)
-        ).add_extension(
-            x509.SubjectAlternativeName([x509.DNSName(u"localhost")]),
-            critical=False,
-        # Sign our certificate with our private key
-        ).sign(private_key, hashes.SHA256())
+
+        if hash_mode == "SHA-256":
+            cert = x509.CertificateBuilder().subject_name(
+                subject
+            ).issuer_name(
+                issuer
+            ).public_key(
+                server_cert_pubk
+            ).serial_number(
+                x509.random_serial_number()
+            ).not_valid_before(
+                datetime.datetime.utcnow()
+            ).not_valid_after(
+                # Our certificate will be valid for 10 minutes
+                datetime.datetime.utcnow() + datetime.timedelta(minutes=1)
+            ).add_extension(
+                x509.SubjectAlternativeName([x509.DNSName(u"localhost")]),
+                critical=False,
+            # Sign our certificate with our private key
+            ).sign(private_key, hashes.SHA256())
+        elif hash_mode == "SHA-512":
+            cert = x509.CertificateBuilder().subject_name(
+                subject
+            ).issuer_name(
+                issuer
+            ).public_key(
+                server_cert_pubk
+            ).serial_number(
+                x509.random_serial_number()
+            ).not_valid_before(
+                datetime.datetime.utcnow()
+            ).not_valid_after(
+                # Our certificate will be valid for 10 minutes
+                datetime.datetime.utcnow() + datetime.timedelta(minutes=1)
+            ).add_extension(
+                x509.SubjectAlternativeName([x509.DNSName(u"localhost")]),
+                critical=False,
+            # Sign our certificate with our private key
+            ).sign(private_key, hashes.SHA512())
         # Write our certificate out to disk.
         with open("certs/Client_licence.pem", "wb") as f:
             f.write(cert.public_bytes(serialization.Encoding.PEM))
@@ -354,17 +384,26 @@ class MediaServer(resource.Resource):
                 }, indent=4).encode('latin')
 
     def sign_client_nonce(self, client_nonce):
+        global hash_mode
         with open("certs/server_pk.pem", "rb") as key_file:
             private_key = serialization.load_pem_private_key(
                 key_file.read(), None, backend=default_backend())
 
         decoded_nonce = binascii.a2b_base64(client_nonce.encode('latin'))
 
-        signature = private_key.sign(
-            decoded_nonce,
-            padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
-                        salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256()
-        )
+        if hash_mode == "SHA-256":
+            signature = private_key.sign(
+                decoded_nonce,
+                padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
+                            salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256()
+            )
+
+        if hash_mode == "SHA-512":
+            signature = private_key.sign(
+                decoded_nonce,
+                padding.PSS(mgf=padding.MGF1(hashes.SHA512()),
+                            salt_length=padding.PSS.MAX_LENGTH), hashes.SHA512()
+            )
 
         # with open("../certs/server_cert.crt", "rb") as cert_file:
         #     server_cert = x509.load_pem_x509_certificate(cert_file.read())
@@ -428,6 +467,7 @@ class MediaServer(resource.Resource):
         try:
             global client_cert
             global auth_nonce
+            global hash_mode
             if request.path == b'/api/auth':
                 client_nonce = json.loads(request.content.read())
                 client_nonce = client_nonce['nonce']
@@ -469,10 +509,17 @@ class MediaServer(resource.Resource):
                 client_cert_pubk = client_cert.public_key()
 
                 try:
-                    client_cert_pubk.verify(signature, auth_nonce, padding.PSS(mgf=padding.MGF1(
-                        hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256())
-                    request.setResponseCode(200)
-                    return b''
+                    if hash_mode == "SHA-256":
+                        client_cert_pubk.verify(signature, auth_nonce, padding.PSS(mgf=padding.MGF1(
+                            hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256())
+                        request.setResponseCode(200)
+                        return b''
+                    if hash_mode == "SHA-512":
+                        client_cert_pubk.verify(signature, auth_nonce, padding.PSS(mgf=padding.MGF1(
+                            hashes.SHA512()), salt_length=padding.PSS.MAX_LENGTH), hashes.SHA512())
+                        request.setResponseCode(200)
+                        return b''
+
 
                 except InvalidSignature:
                     print("Error. Invalid server signature!")
@@ -550,14 +597,25 @@ class MediaServer(resource.Resource):
         print("DATA>>>>>> ", data)
         global current_derived_key
         global algorithm
+        global hash_mode
 
-        current_derived_key = HKDF(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=None,
-            info=b'handshake data' if not data else bytes(str(data), 'utf-8'),
-            backend=default_backend()
-        ).derive(shared_key)
+        if hash_mode == "SHA-256":
+            current_derived_key = HKDF(
+                algorithm=hashes.SHA256(),
+                length=32,
+                salt=None,
+                info=b'handshake data' if not data else bytes(str(data), 'utf-8'),
+                backend=default_backend()
+            ).derive(shared_key)
+
+        if hash_mode == "SHA-512":
+            current_derived_key = HKDF(
+                algorithm=hashes.SHA512(),
+                length=32,
+                salt=None,
+                info=b'handshake data' if not data else bytes(str(data), 'utf-8'),
+                backend=default_backend()
+            ).derive(shared_key)
 
         return current_derived_key
 
@@ -582,8 +640,6 @@ class MediaServer(resource.Resource):
             cipher = Cipher(algorithms.AES(key), modes.CTR(iv))
         if mode == "CFB":
             cipher = Cipher(algorithms.AES(key), modes.CFB(iv))
-        if mode == "CBC":
-            cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
         encryptor = cipher.encryptor()
         ct = encryptor.update(bytes(msg, 'utf-8')) + encryptor.finalize()
 
@@ -599,14 +655,18 @@ class MediaServer(resource.Resource):
             cipher = Cipher(algorithms.AES(key), modes.CTR(iv))
         if mode == "CFB":
             cipher = Cipher(algorithms.AES(key), modes.CFB(iv))
-        if mode == "CBC":
-            cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
         decryptor = cipher.decryptor()
         return decryptor.update(msg) + decryptor.finalize()
 
     def generate_hmac(self, encrypted_cunk):
         global current_derived_key
-        h = hmac.HMAC(current_derived_key, hashes.SHA256())
+        global hash_mode
+
+        if hash_mode == "SHA-256":
+            h = hmac.HMAC(current_derived_key, hashes.SHA256())
+
+        if hash_mode == "SHA-512":
+            h = hmac.HMAC(current_derived_key, hashes.SHA512())
         h.update(encrypted_cunk)
         return h.finalize()
 
