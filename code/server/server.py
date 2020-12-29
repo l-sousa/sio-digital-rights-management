@@ -207,18 +207,11 @@ class MediaServer(resource.Resource):
                     key_file.read(), None, backend=default_backend())
 
             if isinstance(private_key, rsa.RSAPrivateKey):
-                if hash_mode == "SHA-256":
-                    signature = private_key.sign(
-                        ret,
-                        padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
-                                    salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256()
-                    )
-                elif hash_mode == "SHA-512":
-                    signature = private_key.sign(
-                        ret,
-                        padding.PSS(mgf=padding.MGF1(hashes.SHA512()),
-                                    salt_length=padding.PSS.MAX_LENGTH), hashes.SHA512()
-                    )
+                signature = private_key.sign(
+                    ret,
+                    padding.PSS(mgf=padding.MGF1(hash_mode),
+                                salt_length=padding.PSS.MAX_LENGTH), hash_mode
+                )
             else:
                 raise TypeError
 
@@ -236,7 +229,7 @@ class MediaServer(resource.Resource):
 
         ALGORITHMS = ['CHACHA20', 'AES']
         MODE = ['CFB', 'OFB', 'CTR']
-        HASH = ['SHA-256', 'SHA-512', 'MD5', 'BLAKE2b']
+        HASH = ['SHA-512','SHA-256',  'MD5', 'BLAKE2b']
 
         cli_alg = request.args[b'ALGORITHMS']
         cli_alg_d = cli_alg[0].decode('latin')
@@ -280,7 +273,10 @@ class MediaServer(resource.Resource):
 
         mode = matched_mode
         algorithm = matched_alg
-        hash_mode = matched_hash
+        if matched_hash == "SHA-256":
+            hash_mode = hashes.SHA256()
+        elif matched_hash == "SHA-512":
+            hash_mode = hashes.SHA512()
 
         return json.dumps({"Algorithm": matched_alg, "Mode": matched_mode, "Hash": matched_hash}, indent=4).encode('latin')
 
@@ -305,44 +301,24 @@ class MediaServer(resource.Resource):
             x509.NameAttribute(NameOID.COMMON_NAME, u"Client_licence"),
         ])
 
-        if hash_mode == "SHA-256":
-            cert = x509.CertificateBuilder().subject_name(
-                subject
-            ).issuer_name(
-                issuer
-            ).public_key(
-                server_cert_pubk
-            ).serial_number(
-                x509.random_serial_number()
-            ).not_valid_before(
-                datetime.datetime.utcnow()
-            ).not_valid_after(
-                # Our certificate will be valid for 10 minutes
-                datetime.datetime.utcnow() + datetime.timedelta(minutes=1)
-            ).add_extension(
-                x509.SubjectAlternativeName([x509.DNSName(u"localhost")]),
-                critical=False,
-            # Sign our certificate with our private key
-            ).sign(private_key, hashes.SHA256())
-        elif hash_mode == "SHA-512":
-            cert = x509.CertificateBuilder().subject_name(
-                subject
-            ).issuer_name(
-                issuer
-            ).public_key(
-                server_cert_pubk
-            ).serial_number(
-                x509.random_serial_number()
-            ).not_valid_before(
-                datetime.datetime.utcnow()
-            ).not_valid_after(
-                # Our certificate will be valid for 10 minutes
-                datetime.datetime.utcnow() + datetime.timedelta(minutes=1)
-            ).add_extension(
-                x509.SubjectAlternativeName([x509.DNSName(u"localhost")]),
-                critical=False,
-            # Sign our certificate with our private key
-            ).sign(private_key, hashes.SHA512())
+        cert = x509.CertificateBuilder().subject_name(
+            subject
+        ).issuer_name(
+            issuer
+        ).public_key(
+            server_cert_pubk
+        ).serial_number(
+            x509.random_serial_number()
+        ).not_valid_before(
+            datetime.datetime.utcnow()
+        ).not_valid_after(
+            # Our certificate will be valid for 10 minutes
+            datetime.datetime.utcnow() + datetime.timedelta(minutes=1)
+        ).add_extension(
+            x509.SubjectAlternativeName([x509.DNSName(u"localhost")]),
+            critical=False,
+        # Sign our certificate with our private key
+        ).sign(private_key, hash_mode)
         # Write our certificate out to disk.
         with open("certs/Client_licence.pem", "wb") as f:
             f.write(cert.public_bytes(serialization.Encoding.PEM))
@@ -391,19 +367,11 @@ class MediaServer(resource.Resource):
 
         decoded_nonce = binascii.a2b_base64(client_nonce.encode('latin'))
 
-        if hash_mode == "SHA-256":
-            signature = private_key.sign(
-                decoded_nonce,
-                padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
-                            salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256()
-            )
-
-        if hash_mode == "SHA-512":
-            signature = private_key.sign(
-                decoded_nonce,
-                padding.PSS(mgf=padding.MGF1(hashes.SHA512()),
-                            salt_length=padding.PSS.MAX_LENGTH), hashes.SHA512()
-            )
+        signature = private_key.sign(
+            decoded_nonce,
+            padding.PSS(mgf=padding.MGF1(hash_mode),
+                        salt_length=padding.PSS.MAX_LENGTH), hash_mode
+        )
 
         # with open("../certs/server_cert.crt", "rb") as cert_file:
         #     server_cert = x509.load_pem_x509_certificate(cert_file.read())
@@ -509,16 +477,10 @@ class MediaServer(resource.Resource):
                 client_cert_pubk = client_cert.public_key()
 
                 try:
-                    if hash_mode == "SHA-256":
-                        client_cert_pubk.verify(signature, auth_nonce, padding.PSS(mgf=padding.MGF1(
-                            hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256())
-                        request.setResponseCode(200)
-                        return b''
-                    if hash_mode == "SHA-512":
-                        client_cert_pubk.verify(signature, auth_nonce, padding.PSS(mgf=padding.MGF1(
-                            hashes.SHA512()), salt_length=padding.PSS.MAX_LENGTH), hashes.SHA512())
-                        request.setResponseCode(200)
-                        return b''
+                    client_cert_pubk.verify(signature, auth_nonce, padding.PSS(mgf=padding.MGF1(
+                        hash_mode), salt_length=padding.PSS.MAX_LENGTH), hash_mode)
+                    request.setResponseCode(200)
+                    return b''
 
 
                 except InvalidSignature:
@@ -599,23 +561,13 @@ class MediaServer(resource.Resource):
         global algorithm
         global hash_mode
 
-        if hash_mode == "SHA-256":
-            current_derived_key = HKDF(
-                algorithm=hashes.SHA256(),
-                length=32,
-                salt=None,
-                info=b'handshake data' if not data else bytes(str(data), 'utf-8'),
-                backend=default_backend()
-            ).derive(shared_key)
-
-        if hash_mode == "SHA-512":
-            current_derived_key = HKDF(
-                algorithm=hashes.SHA512(),
-                length=32,
-                salt=None,
-                info=b'handshake data' if not data else bytes(str(data), 'utf-8'),
-                backend=default_backend()
-            ).derive(shared_key)
+        current_derived_key = HKDF(
+            algorithm=hash_mode,
+            length=32,
+            salt=None,
+            info=b'handshake data' if not data else bytes(str(data), 'utf-8'),
+            backend=default_backend()
+        ).derive(shared_key)
 
         return current_derived_key
 
@@ -662,11 +614,7 @@ class MediaServer(resource.Resource):
         global current_derived_key
         global hash_mode
 
-        if hash_mode == "SHA-256":
-            h = hmac.HMAC(current_derived_key, hashes.SHA256())
-
-        if hash_mode == "SHA-512":
-            h = hmac.HMAC(current_derived_key, hashes.SHA512())
+        h = hmac.HMAC(current_derived_key, hash_mode)
         h.update(encrypted_cunk)
         return h.finalize()
 

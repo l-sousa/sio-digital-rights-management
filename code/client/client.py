@@ -120,22 +120,13 @@ def exchange_keys(privk, server_pubk):
     shared_key = privk.exchange(server_pubk)
 
     #----/ Key Derivation /----#
-    if matched_hash == "SHA-256":
-        derived = HKDF(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=None,
-            info=b'handshake data',
-            backend=default_backend()
-        ).derive(shared_key)
-    elif matched_hash == "SHA-512":
-        derived = HKDF(
-            algorithm=hashes.SHA512(),
-            length=32,
-            salt=None,
-            info=b'handshake data',
-            backend=default_backend()
-        ).derive(shared_key)
+    derived = HKDF(
+        algorithm=matched_hash,
+        length=32,
+        salt=None,
+        info=b'handshake data',
+        backend=default_backend()
+    ).derive(shared_key)
 
     print("Derived key ", derived)
     return derived
@@ -208,24 +199,15 @@ def derive_key(data=None):
     global shared_key
     global current_derived_key
     global matched_alg
-    global macthed_hash
+    global matched_hash
 
-    if matched_hash == "SHA-256":
-        current_derived_key = HKDF(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=None,
-            info=b'handshake data' if not data else bytes(str(data), 'utf-8'),
-            backend=default_backend()
-        ).derive(shared_key)
-    elif macthed_hash == "SHA-512":
-        current_derived_key = HKDF(
-            algorithm=hashes.SHA512(),
-            length=32,
-            salt=None,
-            info=b'handshake data' if not data else bytes(str(data), 'utf-8'),
-            backend=default_backend()
-        ).derive(shared_key)
+    current_derived_key = HKDF(
+        algorithm=matched_hash,
+        length=32,
+        salt=None,
+        info=b'handshake data' if not data else bytes(str(data), 'utf-8'),
+        backend=default_backend()
+    ).derive(shared_key)
 
     return current_derived_key
 
@@ -254,18 +236,11 @@ def sign_client_nonce(client_nonce):
 
     decoded_nonce = binascii.a2b_base64(client_nonce.encode('latin'))
 
-    if matched_hash == "SHA-256":
-        signature = private_key.sign(
-            decoded_nonce,
-            padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
-                        salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256()
-        )
-    elif matched_hash == "SHA-512":
-        signature = private_key.sign(
-            decoded_nonce,
-            padding.PSS(mgf=padding.MGF1(hashes.SHA512()),
-                        salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256()
-        )
+    signature = private_key.sign(
+        decoded_nonce,
+        padding.PSS(mgf=padding.MGF1(matched_hash),
+                    salt_length=padding.PSS.MAX_LENGTH), matched_hash
+    )
 
     # with open("certs/client.crt", "rb") as cert_file:
     #         server_cert = x509.load_pem_x509_certificate(cert_file.read())
@@ -294,7 +269,7 @@ def main():
     print("##################################### CIPHER AGREEMENTS #####################################")
     ALGORITHMS = ['CHACHA20', 'AES']
     MODE = ['CFB', 'OFB', 'CTR']
-    HASH = ['SHA-256', 'SHA-512', 'MD5', 'BLAKE2b']
+    HASH = ['SHA-512', 'MD5', 'BLAKE2b']
 
     req = requests.get(
         f'{SERVER_URL}/api/protocols?ALGORITHMS={ALGORITHMS}&Modes={MODE}&Digests={HASH}')
@@ -307,7 +282,12 @@ def main():
     args = json.loads(req.text)
     matched_alg = args["Algorithm"]
     matched_mode = args["Mode"]
-    matched_hash = args["Hash"]
+    hash_agree = args["Hash"]
+    if hash_agree == "SHA-256":
+        matched_hash = hashes.SHA256()
+    if hash_agree == "SHA-512":
+        matched_hash = hashes.SHA512()
+    
     print("###################################### LICENCE ##############################################")
     req = requests.get(f'{SERVER_URL}/api/licence')
     resp = req.json()
@@ -381,12 +361,8 @@ def main():
     server_cert_pubk = server_cert.public_key()
 
     try:
-        if matched_hash == "SHA-256":
-            server_cert_pubk.verify(server_signature, nonce, padding.PSS(mgf=padding.MGF1(
-                hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256())
-        elif matched_hash == "SHA-512":
-            server_cert_pubk.verify(server_signature, nonce, padding.PSS(mgf=padding.MGF1(
-                hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH), hashes.SHA512())
+        server_cert_pubk.verify(server_signature, nonce, padding.PSS(mgf=padding.MGF1(
+            matched_hash), salt_length=padding.PSS.MAX_LENGTH), matched_hash)
     except InvalidSignature:
         print("Error. Invalid server signature!")
         exit()
@@ -470,30 +446,16 @@ def main():
         signature = req.content[0:256]
 
         #Verify if is really is the server signature
-        if matched_hash == "SHA-256":
-            if server_cert_pubk.verify(
-                signature,
-                req.content[256:],
-                padding.PSS(
-                    mgf=padding.MGF1(hashes.SHA256()),
-                    salt_length=padding.PSS.MAX_LENGTH
-                ),
-                hashes.SHA256()
-            ) is not None:
-                exit(1)
-        if matched_hash == "SHA-512":
-            if server_cert_pubk.verify(
-                signature,
-                req.content[256:],
-                padding.PSS(
-                    mgf=padding.MGF1(hashes.SHA512()),
-                    salt_length=padding.PSS.MAX_LENGTH
-                ),
-                hashes.SHA512()
-            ) is not None:
-                exit(1)
-
-
+        if server_cert_pubk.verify(
+            signature,
+            req.content[256:],
+            padding.PSS(
+                mgf=padding.MGF1(matched_hash),
+                salt_length=padding.PSS.MAX_LENGTH
+            ),
+            matched_hash
+        ) is not None:
+            exit(1)
 
         # TODO: Process chunk
 
@@ -524,7 +486,7 @@ def main():
             recv_hmac = binascii.a2b_base64(chunk[binascii.b2a_base64(encryptAES(
                 shared_key, 'hmac', json_iv)).decode('latin').strip()].encode('latin'))
 
-        h = hmac.HMAC(current_derived_key, hashes.SHA256())
+        h = hmac.HMAC(current_derived_key, matched_hash)
         h.update(encrypted)
 
         try:
