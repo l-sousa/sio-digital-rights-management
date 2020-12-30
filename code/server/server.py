@@ -400,20 +400,6 @@ class MediaServer(resource.Resource):
                     cert = x509.load_der_x509_certificate(cert_file)
                     ca_cc_certs.append(cert)
 
-    def generate_ca_cc_certs(self):
-        global ca_cc_certs
-
-        certs = glob.glob('cc_certs/CA/*.crt')
-        for cert in certs:
-            with open(cert, 'rb') as cert_file:
-                cert_file = cert_file.read()
-                try:
-                    cert = x509.load_pem_x509_certificate(cert_file)
-                    ca_cc_certs.append(cert)
-                except:
-                    cert = x509.load_der_x509_certificate(cert_file)
-                    ca_cc_certs.append(cert)
-
     def generate_root_cc_certs(self):
         global root_cc_certs
 
