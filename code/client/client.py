@@ -413,7 +413,6 @@ def main():
     server_signature = binascii.a2b_base64(server_signature.encode('latin'))
 
     server_cert_pubk = server_cert.public_key()
-
     try:
         server_cert_pubk.verify(server_signature, nonce,
                                 padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
