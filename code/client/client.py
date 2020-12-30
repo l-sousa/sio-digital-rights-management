@@ -49,12 +49,12 @@ def public_key_decompose(pub):
 
     return p, g, y
 
-
+#Generates client private key
 def generate_private_key(parameters):
     """Generate private key"""
     return parameters.generate_private_key()
 
-
+#Generates client private key
 def generate_public_key(parameters, private_key):
     """Generate public key"""
     public_key = private_key.public_key()
@@ -129,6 +129,7 @@ def exchange_keys(privk, server_pubk):
 
 
 def decryptChaCha20(derived_shared_key, nonce, msg):
+    """CHACHA20 decrypting algorithm """
     global current_derived_key
 
     algorithm = algorithms.ChaCha20(current_derived_key, nonce)
@@ -137,6 +138,7 @@ def decryptChaCha20(derived_shared_key, nonce, msg):
 
 
 def encryptChaCha20(key, msg, nonce=None):
+    """CHACHA20 encrypting algorithm """
     global shared_key
 
     if not nonce:
@@ -154,7 +156,7 @@ def encryptChaCha20(key, msg, nonce=None):
 
 def decryptAES(derived_shared_key, iv, msg):
     global matched_mode
-
+    """AES decrypting algorithm """
     if matched_mode == "OFB":
         cipher = Cipher(algorithms.AES(derived_shared_key), modes.OFB(iv))
     if matched_mode == "CTR":
@@ -169,7 +171,7 @@ def decryptAES(derived_shared_key, iv, msg):
 def encryptAES(key, msg, iv=None):
     global matched_mode
     global shared_key
-
+    """AES decrypting algorithm """
     if not iv:
         iv = os.urandom(16)
 
@@ -194,7 +196,7 @@ def derive_key(data=None):
     global current_derived_key
     global matched_alg
     global matched_hash
-
+    """Derives the shared key bettween the server and the client """
     current_derived_key = HKDF(algorithm=matched_hash,
                                length=32,
                                salt=None,

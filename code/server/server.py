@@ -220,7 +220,7 @@ class MediaServer(resource.Resource):
         global mode
         global algorithm
         global hash_mode
-
+        """Negotiation of the protocols with the client """
         ALGORITHMS = ['CHACHA20', 'AES']
         MODE = ['CFB', 'OFB', 'CTR']
         HASH = ['SHA-512', 'SHA-256', 'MD5']
@@ -281,6 +281,7 @@ class MediaServer(resource.Resource):
         }, indent=4).encode('latin')
 
     def do_get_licence(self, request):
+        """Generates the license (ceritificate) and send it to the client """
         global hash_mode
         #get privk
         with open("certs/server_pk.pem", "rb") as key_file:
@@ -347,6 +348,7 @@ class MediaServer(resource.Resource):
                 }, indent=4))
 
     def sign_client_nonce(self, client_nonce):
+        """Signs the client nonce"""
         global hash_mode
         with open("certs/server_pk.pem", "rb") as key_file:
             private_key = serialization.load_pem_private_key(key_file.read(), None, backend=default_backend())
@@ -385,20 +387,6 @@ class MediaServer(resource.Resource):
                 except:
                     cert = x509.load_der_x509_certificate(cert_file)
                     after_intermediate_cc_certs.append(cert)
-
-    def generate_ca_cc_certs(self):
-        global ca_cc_certs
-
-        certs = glob.glob('cc_certs/CA/*.crt')
-        for cert in certs:
-            with open(cert, 'rb') as cert_file:
-                cert_file = cert_file.read()
-                try:
-                    cert = x509.load_pem_x509_certificate(cert_file)
-                    ca_cc_certs.append(cert)
-                except:
-                    cert = x509.load_der_x509_certificate(cert_file)
-                    ca_cc_certs.append(cert)
 
     def generate_ca_cc_certs(self):
         global ca_cc_certs
@@ -620,7 +608,7 @@ class MediaServer(resource.Resource):
         global current_derived_key
         global algorithm
         global hash_mode
-
+        """Derives the shared key """
         current_derived_key = HKDF(algorithm=hash_mode,
                                    length=32,
                                    salt=None,
@@ -630,6 +618,7 @@ class MediaServer(resource.Resource):
         return current_derived_key
 
     def encrypt_chunk(self, key, data, chunk_media_id):
+        """Encrypts a chunk with specified algorithm """
         global algorithm
         if algorithm == "AES":
             encrypted_data, iv = self.encryptAES(key, data)
@@ -638,6 +627,7 @@ class MediaServer(resource.Resource):
         return encrypted_data, iv
 
     def encryptAES(self, key, msg, iv=None):
+        """Encrypts with AES algorithm """
         global mode
         global shared_key
 
@@ -659,6 +649,7 @@ class MediaServer(resource.Resource):
         return ct, iv
 
     def decryptAES(self, iv, key, msg, mode):
+        """decrypts with AES algorithm """
         if mode == "OFB":
             cipher = Cipher(algorithms.AES(key), modes.OFB(iv))
         if mode == "CTR":
@@ -669,6 +660,7 @@ class MediaServer(resource.Resource):
         return decryptor.update(msg) + decryptor.finalize()
 
     def generate_hmac(self, encrypted_cunk):
+        """generates hmac for authentication"""
         global current_derived_key
         global hash_mode
 
@@ -677,6 +669,7 @@ class MediaServer(resource.Resource):
         return h.finalize()
 
     def decryptChaCha20(self, derived_shared_key, nonce, msg):
+        """Encrypts with CHACHA20 algorithm """
         global current_derived_key
 
         algorithm = algorithms.ChaCha20(shared_key, nonce)
@@ -684,6 +677,7 @@ class MediaServer(resource.Resource):
         return decryptor.update(msg)
 
     def encryptChaCha20(self, key, msg, nonce=None):
+        """Dencrypts with chacha20 algorithm """
         global shared_key
         if not nonce:
             nonce = os.urandom(16)
