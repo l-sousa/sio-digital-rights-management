@@ -30,6 +30,8 @@ current_derived_key = None
 cert_privk = None
 client_cert = None
 auth_nonce = None
+cc_cert = None
+
 
 crl = []
 intermediate_cc_certs = []
@@ -46,8 +48,7 @@ CATALOG = {
     '898a08080d1840793122b7e118b27a95d117ebce': {
         'name': 'Sunny Afternoon - Upbeat Ukulele Background Music',
         'album': 'Upbeat Ukulele Background Music',
-        'description':
-        'Nicolai Heidlas Music: http://soundcloud.com/nicolai-heidlas',
+        'description': 'Nicolai Heidlas Music: http://soundcloud.com/nicolai-heidlas',
         'duration': 3 * 60 + 33,
         'file_name': '898a08080d1840793122b7e118b27a95d117ebce.mp3',
         'file_size': 3407202
@@ -74,22 +75,16 @@ class MediaServer(resource.Resource):
         for media_id in CATALOG:
             media = CATALOG[media_id]
             media_list.append({
-                'id':
-                media_id,
-                'name':
-                media['name'],
-                'description':
-                media['description'],
-                'chunks':
-                math.ceil(media['file_size'] / CHUNK_SIZE),
-                'duration':
-                media['duration']
+                'id': media_id,
+                'name': media['name'],
+                'description': media['description'],
+                'chunks': math.ceil(media['file_size'] / CHUNK_SIZE),
+                'duration': media['duration']
             })
 
         # Return list to client
-        request.responseHeaders.addRawHeader(b"content-type",
-                                             b"application/json")
-        return json.dumps(media_list, indent=4).encode('latin')
+        request.responseHeaders.addRawHeader(b"content-type", b"application/json")
+        return self.enc_json(json.dumps(media_list, indent=4))
 
     # Send a media chunk to the client
     def do_download(self, request):
@@ -104,8 +99,7 @@ class MediaServer(resource.Resource):
         # Check if the media_id is not None as it is required
         if media_id is None:
             request.setResponseCode(400)
-            request.responseHeaders.addRawHeader(b"content-type",
-                                                 b"application/json")
+            request.responseHeaders.addRawHeader(b"content-type", b"application/json")
             return json.dumps({'error': 'invalid media id'}).encode('latin')
 
         # Convert bytes to str
@@ -114,11 +108,8 @@ class MediaServer(resource.Resource):
         # Search media_id in the catalog
         if media_id not in CATALOG:
             request.setResponseCode(404)
-            request.responseHeaders.addRawHeader(b"content-type",
-                                                 b"application/json")
-            return json.dumps({
-                'error': 'media file not found'
-            }).encode('latin')
+            request.responseHeaders.addRawHeader(b"content-type", b"application/json")
+            return json.dumps({'error': 'media file not found'}).encode('latin')
 
         # Get the media item
         media_item = CATALOG[media_id]
@@ -128,16 +119,14 @@ class MediaServer(resource.Resource):
         valid_chunk = False
         try:
             chunk_id = int(chunk_id.decode('latin'))
-            if chunk_id >= 0 and chunk_id < math.ceil(
-                    media_item['file_size'] / CHUNK_SIZE):
+            if chunk_id >= 0 and chunk_id < math.ceil(media_item['file_size'] / CHUNK_SIZE):
                 valid_chunk = True
         except:
             logger.warn("Chunk format is invalid")
 
         if not valid_chunk:
             request.setResponseCode(400)
-            request.responseHeaders.addRawHeader(b"content-type",
-                                                 b"application/json")
+            request.responseHeaders.addRawHeader(b"content-type", b"application/json")
             return json.dumps({'error': 'invalid chunk id'}).encode('latin')
 
         logger.debug(f'Download: chunk: {chunk_id}')
@@ -149,8 +138,7 @@ class MediaServer(resource.Resource):
             pem_data = f.read()
             f.close()
 
-        cli_license = x509.load_pem_x509_certificate(pem_data,
-                                                     default_backend())
+        cli_license = x509.load_pem_x509_certificate(pem_data, default_backend())
 
         license_val = cli_license.not_valid_after
         now_date = datetime.datetime.now()
@@ -158,8 +146,7 @@ class MediaServer(resource.Resource):
             request.setResponseCode(300)
             return b''
         # Open file, seek to correct position and return the chunk
-        with open(os.path.join(CATALOG_BASE, media_item['file_name']),
-                  'rb') as f:
+        with open(os.path.join(CATALOG_BASE, media_item['file_name']), 'rb') as f:
             iv_mp3 = f.read(16)
             f.seek(offset)
 
@@ -172,8 +159,7 @@ class MediaServer(resource.Resource):
                 decryptor = cipher.decryptor()
                 data += decryptor.update(data_temp) + decryptor.finalize()
 
-            request.responseHeaders.addRawHeader(b"content-type",
-                                                 b"application/json")
+            request.responseHeaders.addRawHeader(b"content-type", b"application/json")
 
             data = binascii.b2a_base64(data).decode('latin').strip()
 
@@ -182,88 +168,53 @@ class MediaServer(resource.Resource):
             derived_shared_key = self.derive_key(chunk_media_id)
             print("derived_shared_key ", derived_shared_key)
 
-            encrypted_chunk, iv = self.encrypt_chunk(derived_shared_key, data,
-                                                     chunk_media_id)
+            encrypted_chunk, iv = self.encrypt_chunk(derived_shared_key, data, chunk_media_id)
             hmac = self.generate_hmac(encrypted_chunk)
 
             if algorithm == "AES":
                 json_iv = os.urandom(16)
 
-                ret = json.dumps(
-                    {
-                        binascii.b2a_base64(
-                            self.encryptAES(shared_key, 'media_id', json_iv)).decode('latin').strip(
-                        ):
-                        media_id,
-                        binascii.b2a_base64(
-                            self.encryptAES(shared_key, 'chunk', json_iv)).decode('latin').strip(
-                        ):
-                        chunk_id,
-                        binascii.b2a_base64(
-                            self.encryptAES(shared_key, 'data', json_iv)).decode('latin').strip(
-                        ):
-                        binascii.b2a_base64(encrypted_chunk).decode('latin'),
-                        binascii.b2a_base64(
-                            self.encryptAES(shared_key, 'iv', json_iv)).decode('latin').strip(
-                        ):
-                        binascii.b2a_base64(iv).decode('latin'),
-                        binascii.b2a_base64(
-                            self.encryptAES(shared_key, 'hmac', json_iv)).decode('latin').strip(
-                        ):
-                        binascii.b2a_base64(hmac).decode('latin'),
-                        'json_iv':
-                        binascii.b2a_base64(json_iv).decode('latin'),
-                    },
-                    indent=4).encode('latin')
+                ret = self.enc_json(
+                    json.dumps(
+                        {
+                            'media_id': media_id,
+                            'chunk': chunk_id,
+                            'data': binascii.b2a_base64(encrypted_chunk).decode('latin'),
+                            'iv': binascii.b2a_base64(iv).decode('latin'),
+                            'hmac': binascii.b2a_base64(hmac).decode('latin'),
+                            'json_iv': binascii.b2a_base64(json_iv).decode('latin'),
+                        },
+                        indent=4))
 
             if algorithm == "CHACHA20":
                 json_nonce = os.urandom(16)
-                print("json nonce <><< ", json_nonce)
-                ret = json.dumps(
-                    {
-                        binascii.b2a_base64(
-                            self.encryptChaCha20(shared_key, 'media_id', json_nonce)).decode('latin').strip(
-                        ):
-                        media_id,
-                        binascii.b2a_base64(
-                            self.encryptChaCha20(shared_key, 'chunk', json_nonce)).decode('latin').strip(
-                        ):
-                        chunk_id,
-                        binascii.b2a_base64(
-                            self.encryptChaCha20(shared_key, 'data', json_nonce)).decode('latin').strip(
-                        ):
-                        binascii.b2a_base64(encrypted_chunk).decode('latin'),
-                        binascii.b2a_base64(
-                            self.encryptChaCha20(shared_key, 'iv', json_nonce)).decode('latin').strip(
-                        ):
-                        binascii.b2a_base64(iv).decode('latin'),
-                        binascii.b2a_base64(
-                            self.encryptChaCha20(shared_key, 'hmac', json_nonce)).decode('latin').strip(
-                        ):
-                        binascii.b2a_base64(hmac).decode('latin'),
-                        'json_nonce':
-                        binascii.b2a_base64(json_nonce).decode('latin'),
-                    },
-                    indent=4).encode('latin')
+
+                ret = self.enc_json(
+                    json.dumps(
+                        {
+                            'media_id': media_id,
+                            'chunk': chunk_id,
+                            'data': binascii.b2a_base64(encrypted_chunk).decode('latin'),
+                            'iv': binascii.b2a_base64(iv).decode('latin'),
+                            'hmac': binascii.b2a_base64(hmac).decode('latin'),
+                            'json_nonce': binascii.b2a_base64(json_nonce).decode('latin'),
+                        },
+                        indent=4))
 
             with open("certs/server_pk.pem", "rb") as key_file:
-                private_key = serialization.load_pem_private_key(
-                    key_file.read(), None, backend=default_backend())
+                private_key = serialization.load_pem_private_key(key_file.read(), None, backend=default_backend())
 
             if isinstance(private_key, rsa.RSAPrivateKey):
                 signature = private_key.sign(
-                    ret,
-                    padding.PSS(mgf=padding.MGF1(hash_mode),
-                                salt_length=padding.PSS.MAX_LENGTH), hash_mode)
+                    ret, padding.PSS(mgf=padding.MGF1(hash_mode), salt_length=padding.PSS.MAX_LENGTH), hash_mode)
             else:
                 raise TypeError
 
             return signature + ret
 
         # File was not open?
-        request.responseHeaders.addRawHeader(b"content-type",
-                                             b"application/json")
-        return json.dumps({'error': 'unknown'}, indent=4).encode('latin')
+        request.responseHeaders.addRawHeader(b"content-type", b"application/json")
+        return self.enc_json(json.dumps({'error': 'unknown'}, indent=4))
 
     def do_get_protocols(self, request):
         global mode
@@ -323,20 +274,17 @@ class MediaServer(resource.Resource):
         elif matched_hash == "MD5":
             hash_mode = hashes.MD5()
 
-        return json.dumps(
-            {
-                "Algorithm": matched_alg,
-                "Mode": matched_mode,
-                "Hash": matched_hash
-            },
-            indent=4).encode('latin')
+        return json.dumps({
+            "Algorithm": matched_alg,
+            "Mode": matched_mode,
+            "Hash": matched_hash
+        }, indent=4).encode('latin')
 
     def do_get_licence(self, request):
         global hash_mode
         #get privk
         with open("certs/server_pk.pem", "rb") as key_file:
-            private_key = serialization.load_pem_private_key(
-                key_file.read(), None, backend=default_backend())
+            private_key = serialization.load_pem_private_key(key_file.read(), None, backend=default_backend())
         #get pubk
         with open("certs/server_cert.crt", "rb") as cert_file:
             server_cert = x509.load_pem_x509_certificate(cert_file.read())
@@ -350,28 +298,22 @@ class MediaServer(resource.Resource):
             x509.NameAttribute(NameOID.COMMON_NAME, u"Client_licence"),
         ])
 
-        cert = x509.CertificateBuilder().subject_name(subject).issuer_name(
-            issuer).public_key(server_cert_pubk).serial_number(
-                x509.random_serial_number()).not_valid_before(
-                    datetime.datetime.utcnow()).not_valid_after(
-                        # Our certificate will be valid for 10 minutes
-                        datetime.datetime.utcnow() +
-                        datetime.timedelta(minutes=1)).add_extension(
-                            x509.SubjectAlternativeName(
-                                [x509.DNSName(u"localhost")]),
-                            critical=False,
-                            # Sign our certificate with our private key
-                        ).sign(private_key, hash_mode)
+        cert = x509.CertificateBuilder().subject_name(subject).issuer_name(issuer).public_key(
+            server_cert_pubk).serial_number(x509.random_serial_number()).not_valid_before(
+                datetime.datetime.utcnow()).not_valid_after(
+                    # Our certificate will be valid for 10 minutes
+                    datetime.datetime.utcnow() + datetime.timedelta(minutes=1)).add_extension(
+                        x509.SubjectAlternativeName([x509.DNSName(u"localhost")]),
+                        critical=False,
+                        # Sign our certificate with our private key
+                    ).sign(private_key, hash_mode)
         # Write our certificate out to disk.
         with open("certs/Client_licence.pem", "wb") as f:
             f.write(cert.public_bytes(serialization.Encoding.PEM))
         client_cert_bytes = cert.public_bytes(Encoding.DER)
-        return json.dumps(
-            {
-                'certificate':
-                binascii.b2a_base64(client_cert_bytes).decode('latin').strip()
-            },
-            indent=4).encode('latin')
+        return json.dumps({
+            'certificate': binascii.b2a_base64(client_cert_bytes).decode('latin').strip()
+        }, indent=4).encode('latin')
 
     def do_get_public_key(self, request):
         """Receives the client's public key and sends server public key"""
@@ -400,32 +342,22 @@ class MediaServer(resource.Resource):
         #----/ Load server certificate /----#
         if request.args[b'opt'][0].decode('latin') == "get_cert":
             with open("certs/server_cert.crt", "rb") as cert_file:
-                return json.dumps(
-                    {
-                        'cert':
-                        binascii.b2a_base64(
-                            cert_file.read()).decode('latin').strip()
-                    },
-                    indent=4).encode('latin')
+                return self.enc_json(json.dumps({
+                    'cert': binascii.b2a_base64(cert_file.read()).decode('latin').strip()
+                }, indent=4))
 
     def sign_client_nonce(self, client_nonce):
         global hash_mode
         with open("certs/server_pk.pem", "rb") as key_file:
-            private_key = serialization.load_pem_private_key(
-                key_file.read(), None, backend=default_backend())
+            private_key = serialization.load_pem_private_key(key_file.read(), None, backend=default_backend())
 
         decoded_nonce = binascii.a2b_base64(client_nonce.encode('latin'))
 
-        signature = private_key.sign(
-            decoded_nonce,
-            padding.PSS(mgf=padding.MGF1(hash_mode),
-                        salt_length=padding.PSS.MAX_LENGTH), hash_mode)
+        signature = private_key.sign(decoded_nonce,
+                                     padding.PSS(mgf=padding.MGF1(hash_mode), salt_length=padding.PSS.MAX_LENGTH),
+                                     hash_mode)
 
-        return json.dumps(
-            {
-                'signature': binascii.b2a_base64(signature).decode('latin')
-            },
-            indent=4).encode('latin')
+        return self.enc_json(json.dumps({'signature': binascii.b2a_base64(signature).decode('latin')}, indent=4))
 
     def generate_intermediate_cc_certs(self):
         global intermediate_cc_certs
@@ -521,9 +453,8 @@ class MediaServer(resource.Resource):
     def is_valid_certificate(self, issuer_cert):
         global crl
 
-        if datetime.datetime.now().timestamp() < issuer_cert.not_valid_before.timestamp(
-        ) or datetime.datetime.now().timestamp(
-        ) > issuer_cert.not_valid_after.timestamp():
+        if datetime.datetime.now().timestamp() < issuer_cert.not_valid_before.timestamp() or datetime.datetime.now(
+        ).timestamp() > issuer_cert.not_valid_after.timestamp():
             return False
 
         if issuer_cert in crl:
@@ -540,9 +471,9 @@ class MediaServer(resource.Resource):
         global crl
 
         # 4838
-        
-        #[print(i) for i in root_cc_certs]            
-            
+
+        #[print(i) for i in root_cc_certs]
+
         if intermediate_cc_certs and after_intermediate_cc_certs and ca_cc_certs and root_cc_certs and crl:
             ret = True
         else:
@@ -562,16 +493,16 @@ class MediaServer(resource.Resource):
 
                         ret = True
                         cert = c
-                
+
                         if not self.is_valid_certificate(cert):
                             return False
 
                         #----/ ca_cc_certs /----#
                         for c in ca_cc_certs:
                             if c.subject == cert.issuer:
-                                ret = True                
+                                ret = True
                                 cert = c
-                                
+
                                 if not self.is_valid_certificate(cert):
                                     return False
 
@@ -579,9 +510,9 @@ class MediaServer(resource.Resource):
                                 for c in root_cc_certs:
                                     if c.subject == cert.issuer:
 
-                                        ret = True                
+                                        ret = True
                                         cert = c
-                                        
+
                                         if not self.is_valid_certificate(cert):
                                             return False
                                         break
@@ -599,8 +530,9 @@ class MediaServer(resource.Resource):
 
         print("VALID CHAIN ", ret)
         return ret
-    
+
     def dec_json(self, enc_json):
+        self.derive_key()
         global algorithm
         global current_derived_key
         global mode
@@ -625,113 +557,6 @@ class MediaServer(resource.Resource):
             algorithm = algorithms.ChaCha20(current_derived_key, vec)
             decryptor = Cipher(algorithm, None, default_backend()).decryptor()
             return decryptor.update(msg)
-        
-        
-    # Handle a GET request
-    def render_GET(self, request):
-        logger.debug(f'Received request for {request.uri}')
-        try:
-            if request.path == b'/api/protocols':
-                return self.do_get_protocols(request)
-            elif request.path == b'/api/key':
-                return self.do_get_public_key(request)
-            elif request.path == b'/api/auth':
-                return self.do_authenticate(request)
-            elif request.path == b'/api/list':
-                return self.do_list(request)
-            elif request.path == b'/api/download':
-                return self.do_download(request)
-            elif request.path == b'/api/licence':
-                print(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>><")
-                return self.do_get_licence(request)
-            else:
-                request.responseHeaders.addRawHeader(b"content-type",
-                                                     b'text/plain')
-                return b'Methods: /api/protocols /api/list /api/download'
-
-        except Exception as e:
-            logger.exception(e)
-            request.setResponseCode(500)
-            request.responseHeaders.addRawHeader(b"content-type",
-                                                 b"text/plain")
-            return b''
-
-    # Handle a POST request
-    def render_POST(self, request):
-        logger.debug(f'Received POST for {request.uri}')
-
-        try:
-            global cc_cert
-            global auth_nonce
-            if request.path == b'/api/auth':
-                self.derive_key()
-                client_nonce = json.loads(self.dec_json(request.content.read()))
-                client_nonce = client_nonce['nonce']
-                return self.sign_client_nonce(client_nonce)
-
-            if request.path == b'/api/hardware_auth':
-                self.derive_key()
-
-                cc_cert = json.loads(self.dec_json(request.content.read()))
-                cc_cert = cc_cert['cert']
-                cc_cert = binascii.a2b_base64(cc_cert.encode('latin'))
-                cc_cert = x509.load_pem_x509_certificate(cc_cert)
-
-                self.generate_intermediate_cc_certs()
-                self.generate_after_intermediate_cc_certs()
-                self.generate_ca_cc_certs()
-                self.generate_root_cc_certs()
-                self.generate_crl()
-
-                valid_chain = self.validate_cc_chain(cc_cert)
-
-                if not valid_chain:
-                    print("Error. Certificate chain not valid!")
-                    sys.exit()
-                print("IT IS VALID CHAINNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN")
-                #----/ Send Nonce /----#
-                nonce = os.urandom(32)
-                print("SERVER NONCE::::::::::: ", nonce)
-                auth_nonce = nonce
-                nonce = binascii.b2a_base64(nonce).decode('latin')
-                return json.dumps({'nonce': nonce}, indent=4).encode('latin')
-
-            if request.path == b'/api/validate_signature':
-                self.derive_key()
-
-                #----/ Validate signature /----#
-                signature = json.loads(self.dec_json(request.content.read()))
-                signature = signature['signature']
-                signature = binascii.a2b_base64(signature.encode('latin'))
-
-                cc_publick_key = cc_cert.public_key()
-                # find first public key and verify signature
-                pubKey = cc_cert.public_key()
-
-                result = pubKey.verify(signature, auth_nonce,
-                                       padding.PKCS1v15(), hashes.SHA1())
-                print("\nVerified:", result)
-
-                if result == None:
-                    request.setResponseCode(200)
-                    return b''
-                else:
-                    request.setResponseCode(500)
-                    request.responseHeaders.addRawHeader(
-                        b"content-type", b"text/plain")
-                    return b''
-
-            else:
-                request.responseHeaders.addRawHeader(b"content-type",
-                                                     b'text/plain')
-                return b'Methods: /api/protocols /api/list /api/download'
-
-        except Exception as e:
-            logger.exception(e)
-            request.setResponseCode(500)
-            request.responseHeaders.addRawHeader(b"content-type",
-                                                 b"text/plain")
-            return b''
 
     def build(self, p, g, y):
         """Builds the key based on it's parameters (p,g,y)"""
@@ -774,9 +599,8 @@ class MediaServer(resource.Resource):
 
     def get_parameters(self, request):
         """Get parameters of request"""
-        return int(request.args[b'p'][0].decode('latin')), int(
-            request.args[b'g'][0].decode('latin')), int(
-                request.args[b'y'][0].decode('latin'))
+        return int(request.args[b'p'][0].decode('latin')), int(request.args[b'g'][0].decode('latin')), int(
+            request.args[b'y'][0].decode('latin'))
 
     def exchange_keys(self, privk, client_pubk):
         """Perform key exchange and key derivation"""
@@ -793,17 +617,15 @@ class MediaServer(resource.Resource):
 
     def derive_key(self, data=None):
         global shared_key
-        print("DATA>>>>>> ", data)
         global current_derived_key
         global algorithm
         global hash_mode
 
-        current_derived_key = HKDF(
-            algorithm=hash_mode,
-            length=32,
-            salt=None,
-            info=b'handshake data' if not data else bytes(str(data), 'utf-8'),
-            backend=default_backend()).derive(shared_key)
+        current_derived_key = HKDF(algorithm=hash_mode,
+                                   length=32,
+                                   salt=None,
+                                   info=b'handshake data' if not data else bytes(str(data), 'utf-8'),
+                                   backend=default_backend()).derive(shared_key)
 
         return current_derived_key
 
@@ -874,6 +696,135 @@ class MediaServer(resource.Resource):
             return ct
 
         return ct, nonce
+
+    def enc_json(self, json_dumps):
+        self.derive_key()
+        global algorithm
+        global current_derived_key
+        global mode
+
+        if algorithm == "AES":
+
+            iv = os.urandom(16)
+
+            if mode == "OFB":
+                cipher = Cipher(algorithms.AES(current_derived_key), modes.OFB(iv))
+            if mode == "CTR":
+                cipher = Cipher(algorithms.AES(current_derived_key), modes.CTR(iv))
+            if mode == "CFB":
+                cipher = Cipher(algorithms.AES(current_derived_key), modes.CFB(iv))
+
+            encryptor = cipher.encryptor()
+            ct = encryptor.update(bytes(json_dumps, 'utf-8')) + encryptor.finalize()
+
+            return iv + ct
+
+        if algorithm == "CHACHA20":
+            nonce = os.urandom(16)
+            algorithm = algorithms.ChaCha20(current_derived_key, nonce)
+            cipher = Cipher(algorithm, mode=None)
+            encryptor = cipher.encryptor()
+            ct = encryptor.update(bytes(json_dumps, 'utf-8'))
+
+            return nonce + ct
+
+    # Handle a GET request
+    def render_GET(self, request):
+        logger.debug(f'Received request for {request.uri}')
+        try:
+            if request.path == b'/api/protocols':
+                return self.do_get_protocols(request)
+            elif request.path == b'/api/key':
+                return self.do_get_public_key(request)
+            elif request.path == b'/api/auth':
+                return self.do_authenticate(request)
+            elif request.path == b'/api/list':
+                return self.do_list(request)
+            elif request.path == b'/api/download':
+                return self.do_download(request)
+            elif request.path == b'/api/licence':
+                return self.do_get_licence(request)
+            else:
+                request.responseHeaders.addRawHeader(b"content-type", b'text/plain')
+                return b'Methods: /api/protocols /api/list /api/download'
+
+        except Exception as e:
+            logger.exception(e)
+            request.setResponseCode(500)
+            request.responseHeaders.addRawHeader(b"content-type", b"text/plain")
+            return b''
+
+    # Handle a POST request
+    def render_POST(self, request):
+        logger.debug(f'Received POST for {request.uri}')
+
+        try:
+            global cc_cert
+            global auth_nonce
+            if request.path == b'/api/auth':
+                self.derive_key()
+                client_nonce = json.loads(self.dec_json(request.content.read()))
+                client_nonce = client_nonce['nonce']
+                return self.sign_client_nonce(client_nonce)
+
+            if request.path == b'/api/hardware_auth':
+                self.derive_key()
+
+                cc_cert = json.loads(self.dec_json(request.content.read()))
+                cc_cert = cc_cert['cert']
+                cc_cert = binascii.a2b_base64(cc_cert.encode('latin'))
+                cc_cert = x509.load_pem_x509_certificate(cc_cert)
+
+                self.generate_intermediate_cc_certs()
+                self.generate_after_intermediate_cc_certs()
+                self.generate_ca_cc_certs()
+                self.generate_root_cc_certs()
+                self.generate_crl()
+
+                valid_chain = self.validate_cc_chain(cc_cert)
+
+                if not valid_chain:
+                    print("Error. Certificate chain not valid!")
+                    sys.exit()
+                print("Valid Certificate Chain")
+                #----/ Send Nonce /----#
+                nonce = os.urandom(32)
+                auth_nonce = nonce
+                nonce = binascii.b2a_base64(nonce).decode('latin')
+                return self.enc_json(json.dumps({'nonce': nonce}, indent=4))
+
+            if request.path == b'/api/validate_signature':
+                self.derive_key()
+
+                #----/ Validate signature /----#
+                signature = json.loads(self.dec_json(request.content.read()))
+                signature = signature['signature']
+                signature = binascii.a2b_base64(signature.encode('latin'))
+
+                cc_publick_key = cc_cert.public_key()
+                # find first public key and verify signature
+                pubKey = cc_cert.public_key()
+
+                result = pubKey.verify(signature, auth_nonce, padding.PKCS1v15(), hashes.SHA1())
+                print("\nVerified:", result)
+
+                if result == None:
+                    request.setResponseCode(200)
+                    return b''
+                else:
+                    request.setResponseCode(500)
+                    request.responseHeaders.addRawHeader(b"content-type", b"text/plain")
+                    return b''
+
+            else:
+                request.responseHeaders.addRawHeader(b"content-type", b'text/plain')
+                return b'Methods: /api/protocols /api/list /api/download'
+
+        except Exception as e:
+            logger.exception(e)
+            request.setResponseCode(500)
+            request.responseHeaders.addRawHeader(b"content-type", b"text/plain")
+            return b''
 
 
 print("Server started")

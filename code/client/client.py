@@ -63,9 +63,7 @@ def generate_public_key(parameters, private_key):
 
 def generate_public_and_private_keys():
     """Returns generated keys"""
-    parameters = dh.generate_parameters(generator=2,
-                                        key_size=512,
-                                        backend=default_backend())
+    parameters = dh.generate_parameters(generator=2, key_size=512, backend=default_backend())
     privk = generate_private_key(parameters)
     pubk = generate_public_key(parameters, privk)
     return pubk, privk
@@ -83,8 +81,7 @@ def build(p, g, y):
 def dismantle(pubk):
     """Dismantles the key and returns it's parameters (p,g,y)"""
     print('Decomposing key ', pubk)
-    return pubk.public_numbers().parameter_numbers.p, pubk.public_numbers(
-    ).parameter_numbers.g, pubk.public_numbers().y
+    return pubk.public_numbers().parameter_numbers.p, pubk.public_numbers().parameter_numbers.g, pubk.public_numbers().y
 
 
 def send_pubk(pubk):
@@ -124,10 +121,7 @@ def exchange_keys(privk, server_pubk):
     shared_key = privk.exchange(server_pubk)
 
     #----/ Key Derivation /----#
-    derived = HKDF(algorithm=matched_hash,
-                   length=32,
-                   salt=None,
-                   info=b'handshake data',
+    derived = HKDF(algorithm=matched_hash, length=32, salt=None, info=b'handshake data',
                    backend=default_backend()).derive(shared_key)
 
     print("Derived key ", derived)
@@ -144,11 +138,9 @@ def decryptChaCha20(derived_shared_key, nonce, msg):
 
 def encryptChaCha20(key, msg, nonce=None):
     global shared_key
-    print("dentro do chacha -------------")
 
     if not nonce:
         nonce = os.urandom(16)
-        print(len(nonce))
     algorithm = algorithms.ChaCha20(key, nonce)
     cipher = Cipher(algorithm, mode=None)
     encryptor = cipher.encryptor()
@@ -203,12 +195,11 @@ def derive_key(data=None):
     global matched_alg
     global matched_hash
 
-    current_derived_key = HKDF(
-        algorithm=matched_hash,
-        length=32,
-        salt=None,
-        info=b'handshake data' if not data else bytes(str(data), 'utf-8'),
-        backend=default_backend()).derive(shared_key)
+    current_derived_key = HKDF(algorithm=matched_hash,
+                               length=32,
+                               salt=None,
+                               info=b'handshake data' if not data else bytes(str(data), 'utf-8'),
+                               backend=default_backend()).derive(shared_key)
 
     return current_derived_key
 
@@ -227,6 +218,7 @@ def valid_cert_chain(chain, cert, roots):
 
     print("Invalid Chain!")
     return False
+
 
 def read_cc():
     try:
@@ -249,31 +241,25 @@ def read_cc():
                 attr = dict(zip(map(PyKCS11.CKA.get, all_attr), attr))
                 if attr['CKA_LABEL'] == 'CITIZEN AUTHENTICATION CERTIFICATE':
                     if attr['CKA_CERTIFICATE_TYPE'] != None:
-                        cert = x509.load_der_x509_certificate(
-                            bytes(attr['CKA_VALUE']))
+                        cert = x509.load_der_x509_certificate(bytes(attr['CKA_VALUE']))
 
-            private_key = session.findObjects([
-                (PyKCS11.CKA_CLASS, PyKCS11.CKO_PRIVATE_KEY),
-                (PyKCS11.CKA_LABEL, 'CITIZEN AUTHENTICATION KEY')
-            ])[0]
+            private_key = session.findObjects([(PyKCS11.CKA_CLASS, PyKCS11.CKO_PRIVATE_KEY),
+                                               (PyKCS11.CKA_LABEL, 'CITIZEN AUTHENTICATION KEY')])[0]
 
-            return {
-                'cert': cert,
-                'private_key': private_key,
-                'session': session
-            }
+            return {'cert': cert, 'private_key': private_key, 'session': session}
     except:
         print("Can't read CC")
         sys.exit()
 
 
 def enc_json(json_dumps):
+    derive_key()
     global matched_alg
     global current_derived_key
     global matched_mode
 
     if matched_alg == "AES":
-        
+
         iv = os.urandom(16)
 
         if matched_mode == "OFB":
@@ -285,9 +271,8 @@ def enc_json(json_dumps):
 
         encryptor = cipher.encryptor()
         ct = encryptor.update(bytes(json_dumps, 'utf-8')) + encryptor.finalize()
-
         return iv + ct
-        
+
     if matched_alg == "CHACHA20":
         nonce = os.urandom(16)
         algorithm = algorithms.ChaCha20(current_derived_key, nonce)
@@ -299,11 +284,10 @@ def enc_json(json_dumps):
 
 
 def dec_json(enc_json):
+    derive_key()
     global matched_alg
     global current_derived_key
     k = current_derived_key
-    print("ENC KEY ", current_derived_key)
-
     vec = enc_json[:16]
     msg = enc_json[16:]
 
@@ -337,23 +321,19 @@ def main():
     # Get a list of media files
     print("Contacting Server")
 
-    print(
-        "##################################### CIPHER AGREEMENTS #####################################"
-    )
+    print("##################################### CIPHER AGREEMENTS #####################################")
     ALGORITHMS = ['AES']
     MODE = ['CTR', 'CFB', 'OFB']
     HASH = ['SHA-256', 'SHA-512', 'MD5']
 
-    req = requests.get(
-        f'{SERVER_URL}/api/protocols?ALGORITHMS={ALGORITHMS}&Modes={MODE}&Digests={HASH}'
-    )
+    req = requests.get(f'{SERVER_URL}/api/protocols?ALGORITHMS={ALGORITHMS}&Modes={MODE}&Digests={HASH}')
 
     if req.status_code != 200:
         print("Error. Couldn't agree on protocols")
         exit()
 
-    print("Request protocols: ", req.text)
     args = json.loads(req.text)
+    print("Request protocols: ", args)
     matched_alg = args["Algorithm"]
     matched_mode = args["Mode"]
     hash_agree = args["Hash"]
@@ -364,20 +344,14 @@ def main():
     if hash_agree == "MD5":
         matched_hash = hashes.MD5()
 
-    print(
-        "###################################### LICENCE ##############################################"
-    )
+    print("###################################### LICENCE ##############################################")
     req = requests.get(f'{SERVER_URL}/api/licence')
-    resp = req.json()
-    client_cert_bytes = binascii.a2b_base64(
-        resp["certificate"].encode('latin'))
-    licence = x509.load_der_x509_certificate(client_cert_bytes,
-                                             backend=default_backend())
-    print(">>Licence ", licence)
+    resp = json.loads(req.text)
+    client_cert_bytes = binascii.a2b_base64(resp["certificate"].encode('latin'))
+    licence = x509.load_der_x509_certificate(client_cert_bytes, backend=default_backend())
+    print("Licence ", licence)
 
-    print(
-        "##################################### DIFFIE-HELLMAN #######################################"
-    )
+    print("##################################### DIFFIE-HELLMAN #######################################")
 
     #----/ Generate Client Keys /----#
     print('Generating keys...')
@@ -393,9 +367,7 @@ def main():
     #----/ Perform key exchange and derivation /----#
     shared_key = exchange_keys(privk, server_pubk)
 
-    print(
-        "################################# CERTIFICATE AUTHENTICATION ###############################"
-    )
+    print("################################# CERTIFICATE AUTHENTICATION ###############################")
 
     #----/ Server Authentication/----#
     req = requests.get(f'{SERVER_URL}/api/auth?opt={"get_cert"}')
@@ -404,7 +376,7 @@ def main():
         print("Error. Couldn't receive server certificate")
         sys.exit()
 
-    server_cert = req.json()
+    server_cert = json.loads(dec_json(req.content))
     server_cert = server_cert['cert']
     server_cert = binascii.a2b_base64(server_cert.encode('latin'))
     server_cert = x509.load_pem_x509_certificate(server_cert)
@@ -427,50 +399,41 @@ def main():
     nonce = os.urandom(32)
     encoded_nonce = binascii.b2a_base64(nonce).decode('latin')
 
-    derive_key()
     send = enc_json(json.dumps({'nonce': encoded_nonce}))
-    
-    req = requests.post(f'{SERVER_URL}/api/auth',
-                        data=send)
+
+    req = requests.post(f'{SERVER_URL}/api/auth', data=send)
 
     if req.status_code != 200:
         print("Error. Couldn't receive server nonce signature")
         sys.exit()
 
     #----/ Validate signature /----#
-    server_signature = json.loads(req.text)
+    server_signature = json.loads(dec_json(req.content))
     server_signature = server_signature['signature']
     server_signature = binascii.a2b_base64(server_signature.encode('latin'))
 
     server_cert_pubk = server_cert.public_key()
 
     try:
-        server_cert_pubk.verify(
-            server_signature, nonce,
-            padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
-                        salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256())
+        server_cert_pubk.verify(server_signature, nonce,
+                                padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+                                hashes.SHA256())
 
     except InvalidSignature:
         print("Error. Invalid server signature!")
         sys.exit()
 
-    print(
-        "################################# HARDWARE TOKEN AUTHENTICATION ###############################"
-    )
+    print("################################# HARDWARE TOKEN AUTHENTICATION ###############################")
 
-    derive_key()
-    
     cc_attrs = read_cc()
 
     cert_bytes = cc_attrs['cert'].public_bytes(Encoding.PEM)
 
-    cert = enc_json(
-        json.dumps(
-            {'cert': binascii.b2a_base64(cert_bytes).decode('latin').strip()}))
-    
+    cert = enc_json(json.dumps({'cert': binascii.b2a_base64(cert_bytes).decode('latin').strip()}))
+
     req = requests.post(f'{SERVER_URL}/api/hardware_auth', data=cert)
 
-    server_nonce = json.loads(req.text)
+    server_nonce = json.loads(dec_json(req.content))
     server_nonce = server_nonce['nonce'].strip()
     server_nonce = binascii.a2b_base64(server_nonce.encode('latin'))
 
@@ -483,32 +446,22 @@ def main():
 
     signature = bytes(session.sign(private_key, server_nonce, mechanism))
 
-    derive_key()
+    send = enc_json(json.dumps({'signature': binascii.b2a_base64(signature).decode('latin')}, indent=4))
 
-    send = enc_json(json.dumps(
-            {
-                'signature': binascii.b2a_base64(signature).decode('latin')
-            },
-            indent=4))
-    
-    req = requests.post(
-        f'{SERVER_URL}/api/validate_signature',
-        data=send)
+    req = requests.post(f'{SERVER_URL}/api/validate_signature', data=send)
 
     if req.status_code != 200:
         print(f"Error. Invalid signature. Status code {req.status_code}")
         print(req.text)
         sys.exit()
 
-    print(
-        "##################################### CHUNK PROCESSING #####################################"
-    )
+    print("##################################### CHUNK PROCESSING #####################################")
 
     req = requests.get(f'{SERVER_URL}/api/list')
     if req.status_code == 200:
         print("Got Server List")
 
-    media_list = req.json()
+    media_list = json.loads(dec_json(req.content))
 
     # Present a simple selection menu
     idx = 0
@@ -537,8 +490,7 @@ def main():
     # You need to have ffplay or ffplay.exe in the current folder
     # In alternative, provide the full path to the executable
     if os.name == 'nt':
-        proc = subprocess.Popen(['ffplay.exe', '-i', '-'],
-                                stdin=subprocess.PIPE)
+        proc = subprocess.Popen(['ffplay.exe', '-i', '-'], stdin=subprocess.PIPE)
     else:
         proc = subprocess.Popen(['ffplay', '-i', '-'], stdin=subprocess.PIPE)
 
@@ -546,24 +498,23 @@ def main():
     for chunk in range(media_item['chunks'] + 1):
         chunk_id = chunk
 
-        req = requests.get(
-            f'{SERVER_URL}/api/download?id={media_item["id"]}&chunk={chunk}')
+        req = requests.get(f'{SERVER_URL}/api/download?id={media_item["id"]}&chunk={chunk}')
 
         if req.status_code == 300:
-            print("Not valid license!")
+            print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+            print("!!YOUR LICENSE HAS EXPIRED!!")
+            print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
             exit()
 
-        chunk = json.loads(req.content[256:])
+        chunk = json.loads(dec_json(req.content[256:]))
 
         #Server signature
-        signature = req.content[0:256]
+        signature = req.content[:256]
 
         #Verify if is really is the server signature
-        if server_cert_pubk.verify(
-                signature, req.content[256:],
-                padding.PSS(mgf=padding.MGF1(matched_hash),
-                            salt_length=padding.PSS.MAX_LENGTH),
-                matched_hash) is not None:
+        if server_cert_pubk.verify(signature, req.content[256:],
+                                   padding.PSS(mgf=padding.MGF1(matched_hash), salt_length=padding.PSS.MAX_LENGTH),
+                                   matched_hash) is not None:
             exit(1)
 
         # TODO: Process chunk
@@ -571,40 +522,21 @@ def main():
         derived_shared_key = derive_key(str(chunk_id) + media_item["id"])
 
         if matched_alg == "CHACHA20":
-            json_nonce = binascii.a2b_base64(
-                chunk['json_nonce'].encode('latin'))
-            print(type(json_nonce))
-            encrypted = binascii.a2b_base64(chunk[binascii.b2a_base64(
-                encryptChaCha20(
-                    shared_key, 'data',
-                    json_nonce)).decode('latin').strip()].encode('latin'))
-            iv = binascii.a2b_base64(chunk[binascii.b2a_base64(
-                encryptChaCha20(
-                    shared_key, 'iv',
-                    json_nonce)).decode('latin').strip()].encode('latin'))
+            derived_shared_key = derive_key(str(chunk_id) + media_item["id"])
+            encrypted = binascii.a2b_base64(chunk['data'].encode('latin'))
+            iv = binascii.a2b_base64(chunk['iv'].encode('latin'))
+            json_nonce = binascii.a2b_base64(chunk['json_nonce'].encode('latin'))
+            recv_hmac = binascii.a2b_base64(chunk['hmac'].encode('latin'))
             decrypted = binascii.a2b_base64(
-                str(decryptChaCha20(derived_shared_key, iv, encrypted),
-                    'utf-8').encode('latin'))
+                str(decryptChaCha20(derived_shared_key, iv, encrypted), 'utf-8').encode('latin'))
 
-            recv_hmac = binascii.a2b_base64(chunk[binascii.b2a_base64(
-                encryptChaCha20(
-                    shared_key, 'hmac',
-                    json_nonce)).decode('latin').strip()].encode('latin'))
         if matched_alg == "AES":
+            derived_shared_key = derive_key(str(chunk_id) + media_item["id"])
+            encrypted = binascii.a2b_base64(chunk['data'].encode('latin'))
+            iv = binascii.a2b_base64(chunk['iv'].encode('latin'))
             json_iv = binascii.a2b_base64(chunk['json_iv'].encode('latin'))
-            encrypted = binascii.a2b_base64(chunk[binascii.b2a_base64(
-                encryptAES(shared_key, 'data',
-                           json_iv)).decode('latin').strip()].encode('latin'))
-            iv = binascii.a2b_base64(chunk[binascii.b2a_base64(
-                encryptAES(shared_key, 'iv',
-                           json_iv)).decode('latin').strip()].encode('latin'))
-            decrypted = binascii.a2b_base64(
-                str(decryptAES(derived_shared_key, iv, encrypted),
-                    'utf-8').encode('latin'))
-
-            recv_hmac = binascii.a2b_base64(chunk[binascii.b2a_base64(
-                encryptAES(shared_key, 'hmac',
-                           json_iv)).decode('latin').strip()].encode('latin'))
+            recv_hmac = binascii.a2b_base64(chunk['hmac'].encode('latin'))
+            decrypted = binascii.a2b_base64(str(decryptAES(derived_shared_key, iv, encrypted), 'utf-8').encode('latin'))
 
         h = hmac.HMAC(current_derived_key, matched_hash)
         h.update(encrypted)
