@@ -1,0 +1,6 @@
+{
+    "python.pythonPath": "/Users/botto/Desktop/sio-digital-rights-management/code/venv/bin/python3",
+    "python.formatting.provider": "yapf",
+    "python.formatting.yapfArgs": ["--style={ based_on_style: pep8, column_limit: 120 }"],
+
+}
