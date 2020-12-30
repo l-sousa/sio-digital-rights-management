@@ -600,6 +600,33 @@ class MediaServer(resource.Resource):
         print("VALID CHAIN ", ret)
         return ret
     
+    def dec_json(self, enc_json):
+        global algorithm
+        global current_derived_key
+        global mode
+        k = current_derived_key
+        print("ENC KEY ", current_derived_key)
+
+        vec = enc_json[:16]
+        msg = enc_json[16:]
+
+        if algorithm == "AES":
+            if mode == "OFB":
+                cipher = Cipher(algorithms.AES(current_derived_key), modes.OFB(vec))
+            if mode == "CTR":
+                cipher = Cipher(algorithms.AES(current_derived_key), modes.CTR(vec))
+            if mode == "CFB":
+                cipher = Cipher(algorithms.AES(current_derived_key), modes.CFB(vec))
+
+            decryptor = cipher.decryptor()
+            return decryptor.update(msg) + decryptor.finalize()
+
+        if algorithm == "CHACHA20":
+            algorithm = algorithms.ChaCha20(current_derived_key, vec)
+            decryptor = Cipher(algorithm, None, default_backend()).decryptor()
+            return decryptor.update(msg)
+        
+        
     # Handle a GET request
     def render_GET(self, request):
         logger.debug(f'Received request for {request.uri}')
@@ -637,12 +664,15 @@ class MediaServer(resource.Resource):
             global cc_cert
             global auth_nonce
             if request.path == b'/api/auth':
-                client_nonce = json.loads(request.content.read())
+                self.derive_key()
+                client_nonce = json.loads(self.dec_json(request.content.read()))
                 client_nonce = client_nonce['nonce']
                 return self.sign_client_nonce(client_nonce)
 
             if request.path == b'/api/hardware_auth':
-                cc_cert = json.loads(request.content.read())
+                self.derive_key()
+
+                cc_cert = json.loads(self.dec_json(request.content.read()))
                 cc_cert = cc_cert['cert']
                 cc_cert = binascii.a2b_base64(cc_cert.encode('latin'))
                 cc_cert = x509.load_pem_x509_certificate(cc_cert)
@@ -667,8 +697,10 @@ class MediaServer(resource.Resource):
                 return json.dumps({'nonce': nonce}, indent=4).encode('latin')
 
             if request.path == b'/api/validate_signature':
+                self.derive_key()
+
                 #----/ Validate signature /----#
-                signature = json.loads(request.content.read())
+                signature = json.loads(self.dec_json(request.content.read()))
                 signature = signature['signature']
                 signature = binascii.a2b_base64(signature.encode('latin'))
 
