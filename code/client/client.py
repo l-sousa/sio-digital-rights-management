@@ -34,21 +34,6 @@ matched_hash = None
 current_derived_key = None
 licence = None
 
-
-def public_key_compose(p, g, y):
-    pn = dh.DHParameterNumbers(p, g)
-    parameters = pn.parameters(backend=default_backend())
-    peer_public_numbers = dh.DHPublicNumbers(y, pn)
-    return peer_public_numbers.public_key(backend=default_backend())
-
-
-def public_key_decompose(pub):
-    p = pub.public_numbers().parameter_numbers.p
-    g = pub.public_numbers().parameter_numbers.g
-    y = pub.public_numbers().y
-
-    return p, g, y
-
 #Generates client private key
 def generate_private_key(parameters):
     """Generate private key"""
@@ -169,6 +154,7 @@ def decryptAES(derived_shared_key, iv, msg):
 
 
 def encryptAES(key, msg, iv=None):
+    """ Encrypt using AES algorithm with pre-defined mode"""
     global matched_mode
     global shared_key
     """AES decrypting algorithm """
@@ -192,6 +178,7 @@ def encryptAES(key, msg, iv=None):
 
 
 def derive_key(data=None):
+    """ Derives the key to allow key rotation """
     global shared_key
     global current_derived_key
     global matched_alg
@@ -207,6 +194,7 @@ def derive_key(data=None):
 
 
 def valid_cert_chain(chain, cert, roots):
+    """ Validates the chain of certificates of the server's certificate """
     chain.append(cert)
     issuer = cert.issuer
     subject = cert.subject
@@ -223,6 +211,7 @@ def valid_cert_chain(chain, cert, roots):
 
 
 def read_cc():
+    """ Detetcts if the card is inserted and reads necessary data of the card"""
     try:
         lib = '/usr/local/lib/libpteidpkcs11.dylib'
         pkcs11 = PyKCS11.PyKCS11Lib()
@@ -255,6 +244,7 @@ def read_cc():
 
 
 def enc_json(json_dumps):
+    """ Encrypts the json string before sending it """
     derive_key()
     global matched_alg
     global current_derived_key
@@ -286,6 +276,7 @@ def enc_json(json_dumps):
 
 
 def dec_json(enc_json):
+    """ Decrypts the encrypted json based on algorithm"""
     derive_key()
     global matched_alg
     global current_derived_key

@@ -88,6 +88,7 @@ class MediaServer(resource.Resource):
 
     # Send a media chunk to the client
     def do_download(self, request):
+        """ Sends the encrypted chunk with the signature"""
         global algorithm
         global shared_key
         global hash_mode
@@ -217,6 +218,7 @@ class MediaServer(resource.Resource):
         return self.enc_json(json.dumps({'error': 'unknown'}, indent=4))
 
     def do_get_protocols(self, request):
+        """ Receives the client's chiper suite and finds compatible fields"""
         global mode
         global algorithm
         global hash_mode
@@ -362,6 +364,7 @@ class MediaServer(resource.Resource):
         return self.enc_json(json.dumps({'signature': binascii.b2a_base64(signature).decode('latin')}, indent=4))
 
     def generate_intermediate_cc_certs(self):
+        """ Generates intermediate cc certs (first chain link) """
         global intermediate_cc_certs
 
         certs = glob.glob('./cc_certs/intermediates/*.cer')
@@ -376,6 +379,8 @@ class MediaServer(resource.Resource):
                     intermediate_cc_certs.append(cert)
 
     def generate_after_intermediate_cc_certs(self):
+        """ Generates after intermediate cc certs (second chain link) """
+
         global after_intermediate_cc_certs
         certs = glob.glob('cc_certs/cc/*.cer')
         for cert in certs:
@@ -389,6 +394,7 @@ class MediaServer(resource.Resource):
                     after_intermediate_cc_certs.append(cert)
 
     def generate_ca_cc_certs(self):
+        """ Generates ca cc certs (third chain link) """
         global ca_cc_certs
 
         certs = glob.glob('cc_certs/CA/*.crt')
@@ -403,6 +409,7 @@ class MediaServer(resource.Resource):
                     ca_cc_certs.append(cert)
 
     def generate_root_cc_certs(self):
+        """ Generates root cc certs (fourth chain link) """
         global root_cc_certs
 
         certs = glob.glob('cc_certs/etc/ssl/certs/*')
@@ -421,6 +428,7 @@ class MediaServer(resource.Resource):
                 root_cc_certs.append(cert)
 
     def generate_crl(self):
+        """ Generate CRLs"""
         global crl
 
         certs = glob.glob('cc_certs/CRL/*.crl')
@@ -439,6 +447,7 @@ class MediaServer(resource.Resource):
                 crl.append(cert)
 
     def is_valid_certificate(self, issuer_cert):
+        """ Checks if certificate is not expired and hasn't been revoked """
         global crl
 
         if datetime.datetime.now().timestamp() < issuer_cert.not_valid_before.timestamp() or datetime.datetime.now(
@@ -451,6 +460,7 @@ class MediaServer(resource.Resource):
         return True
 
     def validate_cc_chain(self, cert):
+        """ Validates the whole chain of a give certificate """
         # FALTA FAZER CRLS
         global intermediate_cc_certs
         global after_intermediate_cc_certs
@@ -520,6 +530,7 @@ class MediaServer(resource.Resource):
         return ret
 
     def dec_json(self, enc_json):
+        """ Decrypts the encrypted json based on algorithm"""
         self.derive_key()
         global algorithm
         global current_derived_key
@@ -692,6 +703,7 @@ class MediaServer(resource.Resource):
         return ct, nonce
 
     def enc_json(self, json_dumps):
+        """ Encrypts the json string before sending it """
         self.derive_key()
         global algorithm
         global current_derived_key
@@ -756,12 +768,15 @@ class MediaServer(resource.Resource):
             global cc_cert
             global auth_nonce
             if request.path == b'/api/auth':
+                """ receive the client's nonce for the server to sign """
                 self.derive_key()
                 client_nonce = json.loads(self.dec_json(request.content.read()))
                 client_nonce = client_nonce['nonce']
                 return self.sign_client_nonce(client_nonce)
 
             if request.path == b'/api/hardware_auth':
+                """ Receives the CC certificate, builds the collection of lists (chain) and validates the certificate's
+                chain"""
                 self.derive_key()
 
                 cc_cert = json.loads(self.dec_json(request.content.read()))
@@ -788,6 +803,7 @@ class MediaServer(resource.Resource):
                 return self.enc_json(json.dumps({'nonce': nonce}, indent=4))
 
             if request.path == b'/api/validate_signature':
+                """ Validates the server's nonce that was signed by the client"""
                 self.derive_key()
 
                 #----/ Validate signature /----#
