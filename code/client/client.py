@@ -1,22 +1,25 @@
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives.asymmetric import dh, padding
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.primitives import hmac
-from cryptography import x509
-from cryptography.hazmat.primitives.serialization import load_pem_private_key
-from cryptography.hazmat.primitives import serialization
-import requests
-import logging
 import binascii
+import datetime
 import json
+import logging
 import os
 import subprocess
-import time
 import sys
-import datetime
+import time
+
+import requests
+from cryptography import x509
 from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import hashes, hmac, serialization
+from cryptography.hazmat.primitives.asymmetric import dh, padding
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives.serialization import load_pem_private_key
+from PyKCS11 import *
+from cryptography.hazmat.primitives.serialization.base import Encoding
+from cryptography.x509.oid import NameOID
+
 
 logger = logging.getLogger('root')
 FORMAT = "[%(filename)s:%(lineno)s - %(funcName)20s() ] %(message)s"
@@ -252,7 +255,51 @@ def sign_client_nonce(client_nonce):
         'signature': binascii.b2a_base64(signature).decode('latin')
     }, indent=4).encode('latin')
 
+def read_cc():
+    try:
+        lib = '/usr/local/lib/libpteidpkcs11.dylib'
+        pkcs11 = PyKCS11.PyKCS11Lib()
+        pkcs11.load(lib)
+        slots = pkcs11.getSlotList()
+        if slots:
+            slot = pkcs11.getSlotList(tokenPresent=True)[0]
+            print("Valid CC")
+            all_attr = list(PyKCS11.CKA.keys())
+            all_attr = [e for e in all_attr if isinstance(e, int)]
+            session = pkcs11.openSession(slot)
+            userInfo = dict()
+            for obj in session.findObjects():
+                
+            # Get object attributes
+                attr = session.getAttributeValue(obj, all_attr)
+                # Create dictionary with attributes
+                attr = dict(zip(map(PyKCS11.CKA.get, all_attr), attr))
+                if attr['CKA_LABEL'] == 'CITIZEN AUTHENTICATION CERTIFICATE':
+                    if attr['CKA_CERTIFICATE_TYPE'] != None:
+                        cert = x509.load_der_x509_certificate(bytes(attr['CKA_VALUE']))
 
+            private_key = session.findObjects([
+                (PyKCS11.CKA_CLASS, PyKCS11.CKO_PRIVATE_KEY),
+                (PyKCS11.CKA_LABEL, 'CITIZEN AUTHENTICATION KEY')
+                ])[0]
+
+            return {
+                'cert': cert,
+                'private_key': private_key,
+                'session': session
+            }
+    except:
+        print("Can't read CC")
+        sys.exit()
+
+# def enc_json():
+#     global matched_algorithm
+    
+#     if matched_algorithm == "AES":
+#         msg, vec = encrypt
+    
+
+    
 def main():
     global shared_key
     global matched_mode
@@ -267,8 +314,8 @@ def main():
     print("Contacting Server")
 
     print("##################################### CIPHER AGREEMENTS #####################################")
-    ALGORITHMS = ['CHACHA20', 'AES']
-    MODE = ['CFB', 'OFB', 'CTR']
+    ALGORITHMS = ['AES']
+    MODE = ['CTR', 'CFB', 'OFB']
     HASH = ['SHA-256','SHA-512', 'MD5']
 
     req = requests.get(
@@ -315,12 +362,12 @@ def main():
 
     print("################################# CERTIFICATE AUTHENTICATION ###############################")
 
-    #----/ Server Authentication/----#
+     #----/ Server Authentication/----#
     req = requests.get(f'{SERVER_URL}/api/auth?opt={"get_cert"}')
 
     if req.status_code != 200:
         print("Error. Couldn't receive server certificate")
-        exit()
+        sys.exit()
 
     server_cert = req.json()
     server_cert = server_cert['cert']
@@ -339,7 +386,7 @@ def main():
 
     if not valid_chain:
         print("Invalid certificate chain!")
-        exit()
+        sys.exit()
 
     #----/ Send Nonce /----#
     nonce = os.urandom(32)
@@ -353,7 +400,7 @@ def main():
 
     if req.status_code != 200:
         print("Error. Couldn't receive server nonce signature")
-        exit()
+        sys.exit()
 
     #----/ Validate signature /----#
     server_signature = json.loads(req.text)
@@ -363,33 +410,57 @@ def main():
     server_cert_pubk = server_cert.public_key()
 
     try:
-        server_cert_pubk.verify(server_signature, nonce, padding.PSS(mgf=padding.MGF1(
-            matched_hash), salt_length=padding.PSS.MAX_LENGTH), matched_hash)
+        server_cert_pubk.verify(
+            server_signature, nonce,
+            padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
+                        salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256())
+
     except InvalidSignature:
         print("Error. Invalid server signature!")
-        exit()
+        sys.exit()
 
-    #----/ Client Authentication /----#
+    print(
+        "################################# HARDWARE TOKEN AUTHENTICATION ###############################"
+    )
 
-    with open("certs/client_cert.crt", "rb") as cert_file:
-        cert = json.dumps({
-            'cert': binascii.b2a_base64(cert_file.read()).decode('latin').strip()
-        }, indent=4).encode('latin')
+    cc_attrs = read_cc()
 
-    req = requests.post(f'{SERVER_URL}/api/client_cert',
-                        data=cert)
+    cert_bytes = cc_attrs['cert'].public_bytes(Encoding.PEM)
+
+    cert = json.dumps(
+        {
+            'cert': binascii.b2a_base64(cert_bytes).decode('latin').strip()
+        },
+        indent=4).encode('latin')
+
+    req = requests.post(f'{SERVER_URL}/api/hardware_auth', data=cert)
 
     server_nonce = json.loads(req.text)
-    server_nonce = server_nonce['nonce']
-    signature = sign_client_nonce(server_nonce)
+    server_nonce = server_nonce['nonce'].strip()
+    server_nonce = binascii.a2b_base64(server_nonce.encode('latin'))
 
-    req = requests.post(f'{SERVER_URL}/api/validate_signature',
-                        data=signature)
+    session = cc_attrs['session']
+
+    mechanism = Mechanism(CKM_SHA1_RSA_PKCS, None)
+
+    cc_cert = cc_attrs['cert']
+    private_key = cc_attrs['private_key']
+
+    signature = bytes(session.sign(private_key, server_nonce, mechanism))
+
+    req = requests.post(
+        f'{SERVER_URL}/api/validate_signature',
+        data=json.dumps(
+            {
+                'signature': binascii.b2a_base64(signature).decode('latin')
+            },
+            indent=4).encode('latin'))
 
     if req.status_code != 200:
-        print("Error. Invalid signature")
-        exit()
-
+        print(f"Error. Invalid signature. Status code {req.status_code}")
+        print(req.text)
+        sys.exit()
+    
     print("##################################### CHUNK PROCESSING #####################################")
 
     req = requests.get(f'{SERVER_URL}/api/list')
